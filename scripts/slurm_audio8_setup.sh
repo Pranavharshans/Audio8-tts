@@ -18,6 +18,7 @@ module load python
 
 export http_proxy=http://proxy.nhr.fau.de:80
 export https_proxy=http://proxy.nhr.fau.de:80
+export PIP_CACHE_DIR="$(dirname "${VENV}")/pip-cache"
 
 mkdir -p "$(dirname "${VENV}")"
 if [[ ! -x "${VENV}/bin/python" ]]; then
