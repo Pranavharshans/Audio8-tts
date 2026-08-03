@@ -60,6 +60,8 @@ export FREEZE_FAST_AR=true
 export BF16=true
 export GRADIENT_CHECKPOINTING=true
 export DATALOADER_NUM_WORKERS="${DATALOADER_NUM_WORKERS:-4}"
+export EVAL_STEPS="${EVAL_STEPS:-100}"
+export SAVE_STEPS="${SAVE_STEPS:-100}"
 export RESUME_MODE=auto
 export REPORT_TO=tensorboard
 
