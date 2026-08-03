@@ -18,7 +18,8 @@ prepared_data/
 
 # Model weights are distributed separately from the source repository.
 /model/
-/configs/
+/configs/*
+!/configs/deepspeed_zero2.json
 *.safetensors
 *.pth
 *.pt

@@ -6,8 +6,10 @@ PYTHON="${PYTHON:-python}"
 MODEL="${MODEL:-${PROJECT_ROOT}/model/audio8_tts_0_6B_preview}"
 TRAIN_JSONL="${TRAIN_JSONL:-}"
 EVAL_JSONL="${EVAL_JSONL:-}"
+ADDITIONAL_TOKENS_JSON="${ADDITIONAL_TOKENS_JSON:-}"
 OUTPUT_DIR="${OUTPUT_DIR:-${PROJECT_ROOT}/outputs/audio8_tts_sft}"
 EXPORT_DIR="${EXPORT_DIR:-${OUTPUT_DIR}/export}"
+DEEPSPEED_CONFIG="${DEEPSPEED_CONFIG:-${PROJECT_ROOT}/configs/deepspeed_zero2.json}"
 
 NNODES="${NNODES:-1}"
 NODE_RANK="${NODE_RANK:-0}"
@@ -25,10 +27,24 @@ export TOKENIZERS_PARALLELISM="${TOKENIZERS_PARALLELISM:-false}"
 export OMP_NUM_THREADS="${OMP_NUM_THREADS:-1}"
 
 data_args=(--train_jsonl "${TRAIN_JSONL}")
+model_args=(--model_name_or_path "${MODEL}")
 training_args=(--do_train true)
+if [[ -n "${ADDITIONAL_TOKENS_JSON}" ]]; then
+  model_args+=(--additional_tokens_json "${ADDITIONAL_TOKENS_JSON}")
+fi
 if [[ -n "${EVAL_JSONL}" ]]; then
   data_args+=(--eval_jsonl "${EVAL_JSONL}")
   training_args+=(--do_eval true --eval_strategy steps --eval_steps "${EVAL_STEPS:-500}")
+fi
+
+deepspeed_args=()
+if [[ -n "${DEEPSPEED_CONFIG}" && "${DEEPSPEED_CONFIG}" != "none" ]]; then
+  if [[ ! -f "${DEEPSPEED_CONFIG}" ]]; then
+    echo "DeepSpeed config does not exist: ${DEEPSPEED_CONFIG}" >&2
+    echo "Set DEEPSPEED_CONFIG=none to train without DeepSpeed." >&2
+    exit 2
+  fi
+  deepspeed_args+=(--deepspeed "${DEEPSPEED_CONFIG}")
 fi
 
 "${PYTHON}" -m torch.distributed.run \
@@ -38,7 +54,7 @@ fi
   --master_addr "${MASTER_ADDR}" \
   --master_port "${MASTER_PORT}" \
   "${PROJECT_ROOT}/audio8_tts_sft.py" \
-  --model_name_or_path "${MODEL}" \
+  "${model_args[@]}" \
   "${data_args[@]}" \
   --output_dir "${OUTPUT_DIR}" \
   --export_dir "${EXPORT_DIR}" \
@@ -63,6 +79,6 @@ fi
   --resume_mode "${RESUME_MODE:-none}" \
   --report_to "${REPORT_TO:-tensorboard}" \
   --remove_unused_columns false \
-  --deepspeed "${DEEPSPEED_CONFIG:-${PROJECT_ROOT}/configs/deepspeed_zero2.json}" \
+  "${deepspeed_args[@]}" \
   "${training_args[@]}" \
   "$@"

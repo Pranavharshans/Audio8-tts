@@ -9,12 +9,11 @@ import math
 from dataclasses import dataclass, field
 from functools import partial
 from pathlib import Path
-from typing import Any
 
 import torch
 import torch.nn.functional as F
-from torch.utils.data import Dataset
 from torch.utils.checkpoint import checkpoint
+from torch.utils.data import Dataset
 from transformers import AutoModel, AutoProcessor, HfArgumentParser, Trainer, TrainingArguments
 from transformers.trainer_utils import get_last_checkpoint
 
@@ -27,7 +26,7 @@ from audio8_tts_data import (
     resolve_manifest_path,
     validate_sample_id,
 )
-
+from audio8_tts_tokenizer import extend_tokenizer_embeddings, load_additional_tokens
 
 LOGGER = logging.getLogger(__name__)
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -42,6 +41,12 @@ class ModelArguments:
     max_length: int = field(default=2048)
     freeze_slow_ar: bool = field(default=False)
     freeze_fast_ar: bool = field(default=False)
+    additional_tokens_json: str | None = field(
+        default=None,
+        metadata={
+            "help": "Optional JSON list or token-miner output to append without reindexing."
+        },
+    )
 
 
 @dataclass
@@ -189,7 +194,9 @@ def set_trainable_modules(model: torch.nn.Module, *, freeze_slow: bool, freeze_f
             parameter.requires_grad = False
         if freeze_fast and name.startswith(fast_prefixes):
             parameter.requires_grad = False
-    trainable = sum(parameter.numel() for parameter in model.parameters() if parameter.requires_grad)
+    trainable = sum(
+        parameter.numel() for parameter in model.parameters() if parameter.requires_grad
+    )
     total = sum(parameter.numel() for parameter in model.parameters())
     if trainable == 0:
         raise ValueError("freeze_slow_ar and freeze_fast_ar leave no trainable parameters")
@@ -347,6 +354,10 @@ def main() -> None:
         raise ValueError("loss weights must be non-negative")
     if math.isclose(training_args.slow_loss_weight + training_args.fast_loss_weight, 0.0):
         raise ValueError("at least one loss weight must be positive")
+    if model_args.additional_tokens_json and model_args.freeze_slow_ar:
+        raise ValueError(
+            "--additional_tokens_json requires --freeze_slow_ar false so new embeddings train"
+        )
 
     training_args.remove_unused_columns = False
     processor = AutoProcessor.from_pretrained(
@@ -360,6 +371,16 @@ def main() -> None:
         trust_remote_code=True,
         dtype=dtype,
     )
+    if model_args.additional_tokens_json:
+        additional_tokens = load_additional_tokens(Path(model_args.additional_tokens_json))
+        extension = extend_tokenizer_embeddings(
+            processor.tokenizer,
+            model,
+            additional_tokens,
+            logger=LOGGER,
+        )
+        if extension.added_tokens == 0:
+            LOGGER.warning("No new tokenizer entries were added")
     if int(model_args.max_length) > int(model.config.max_seq_len):
         raise ValueError(
             f"--max_length={model_args.max_length} exceeds the model context "

@@ -335,12 +335,49 @@ are optional, but must be provided together.
 {"id":"utt_002","text":"Another transcript","audio":"audio/another.wav"}
 ```
 
-### 2. Precompute codec indices
+For the `Praha-Labs/TTS-Ml` Hugging Face dataset, the importer streams the
+Parquet shards without decoding audio in Python and creates a deterministic
+train/eval split. This example materializes a small pilot:
+
+```bash
+python audio8_tts_import_hf.py \
+  --dataset Praha-Labs/TTS-Ml \
+  --output-dir data/tts_ml \
+  --max-samples 2000 \
+  --eval-samples 100
+```
+
+### 2. Optional: extend the tokenizer for Malayalam
+
+The base tokenizer can represent Malayalam through byte-level tokens. For
+language adaptation, mine frequent Malayalam grapheme and subword candidates
+from the training transcripts and append them without changing any existing
+text, special, or semantic-audio token IDs:
+
+```bash
+python audio8_tts_mine_tokens.py \
+  --input-jsonl data/train.jsonl \
+  --output-json prepared_data/malayalam_tokens.json \
+  --model Audio8/Audio8-TTS-Preview-0.6b \
+  --max-tokens 2048
+```
+
+The output includes the selected tokens, their corpus frequencies, their
+current byte-token lengths, and estimated token savings. During SFT, each new
+embedding is initialized from the mean of its original byte-token embeddings.
+The trainer verifies that every existing tokenizer ID remains unchanged.
+
+Do not replace the pretrained tokenizer with a newly trained tokenizer. Audio8
+uses fixed IDs for its semantic audio tokens, and reindexing the vocabulary
+would invalidate the checkpoint.
+
+### 3. Precompute codec indices
 
 ```bash
 python audio8_tts_prepare.py \
   --input-jsonl data/train.jsonl \
   --output-jsonl prepared_data/train.jsonl \
+  --model Audio8/Audio8-TTS-Preview-0.6b \
   --batch-size 4
 ```
 
@@ -348,7 +385,22 @@ The prepared manifest points to validated `[10, T]` NumPy arrays using paths
 relative to the prepared manifest. Existing valid arrays are reused unless
 `--overwrite` is passed.
 
-### 3. Train
+### 4. Train
+
+For Malayalam adaptation, pass the mined token file and initially keep the fast
+acoustic branch frozen. The slow branch must remain trainable because it owns
+the text embeddings:
+
+```bash
+MODEL=Audio8/Audio8-TTS-Preview-0.6b \
+TRAIN_JSONL=prepared_data/train.jsonl \
+ADDITIONAL_TOKENS_JSON=prepared_data/malayalam_tokens.json \
+FREEZE_SLOW_AR=false \
+FREEZE_FAST_AR=true \
+LEARNING_RATE=5e-6 \
+NPROC_PER_NODE=1 \
+bash audio8_tts_sft.sh
+```
 
 Single GPU:
 
@@ -372,6 +424,82 @@ For multi-node training, set `NNODES`, `NODE_RANK`, `MASTER_ADDR`, and
 `MASTER_PORT` on each node. Common hyperparameters and output paths can be
 overridden through the environment variables in `audio8_tts_sft.sh`; additional
 Transformers arguments may be appended to the command.
+
+The launcher defaults to the included `configs/deepspeed_zero2.json`. Set
+`DEEPSPEED_CONFIG=none` to disable DeepSpeed or provide another config path for
+the cluster. Every distributed rank must see the same model, prepared manifest,
+and additional-token JSON paths.
+
+### FAU Alex workflow
+
+Do not install packages, download/materialize the dataset, encode codec tokens,
+or train on an Alex login node. The login node is only used to manage files and
+submit/inspect Slurm jobs. Keep the repository, virtual environment, Hugging
+Face cache, extracted audio, and checkpoints under `$WORK`, not the backed-up
+`$HOME` filesystem.
+
+After cloning the repository on the login node, submit a compute job to build
+the environment. FAU recommends installing GPU packages inside an allocation
+on the target cluster so CUDA support is detected correctly:
+
+```bash
+PROJECT_ROOT="$WORK/audio8tts"
+VENV="$WORK/venvs/audio8tts"
+DATA_ROOT="$WORK/audio8_ml"
+
+cd "$PROJECT_ROOT"
+sbatch \
+  --partition=a40 \
+  --gres=gpu:a40:1 \
+  --cpus-per-task=16 \
+  scripts/slurm_audio8_setup.sh "$PROJECT_ROOT" "$VENV"
+```
+
+When setup finishes successfully, submit a 2,000-example end-to-end preparation
+pilot. This downloads only the rows needed for the pilot, creates a 1,900/100
+train/eval split, mines Malayalam tokens, and encodes target audio to codec
+indices:
+
+```bash
+sbatch \
+  --partition=a100 \
+  --gres=gpu:a100:1 \
+  --cpus-per-task=16 \
+  scripts/slurm_audio8_ml_prepare.sh \
+  "$PROJECT_ROOT" "$DATA_ROOT" "$VENV" 2000
+```
+
+Then submit single-GPU SFT:
+
+```bash
+sbatch \
+  --partition=a100 \
+  --gres=gpu:a100:1 \
+  --cpus-per-task=16 \
+  scripts/slurm_audio8_tts_sft.sh \
+  "$PROJECT_ROOT" \
+  "$DATA_ROOT/prepared/train.jsonl" \
+  "$DATA_ROOT/prepared/malayalam_tokens.json" \
+  Audio8/Audio8-TTS-Preview-0.6b \
+  "$VENV" \
+  "$DATA_ROOT/outputs/pilot" \
+  "$DATA_ROOT/prepared/eval.jsonl" \
+  "$DATA_ROOT/hf_cache"
+```
+
+The job script derives `NPROC_PER_NODE` from Slurm's assigned GPUs, writes to
+the requested output directory, and resumes its latest checkpoint when a
+time-limited job is resubmitted. Check jobs with `squeue --me`, inspect a job
+with `scontrol show job JOB_ID`, cancel with `scancel JOB_ID`, and read the
+`audio8-*.out`/`audio8-*.err` files created in the submission directory.
+
+After the pilot completes and generated Malayalam samples have been checked,
+submit full preparation by replacing `2000` with `all`. The dataset contains
+71,608 utterances and about 20.8 GB of Parquet data; the extracted audio plus
+71,608 codec arrays requires substantially more space and files than the
+download itself, so check `shownicerquota.pl` first. Full preparation and SFT
+may need multiple 24-hour submissions; both preparation and training reuse
+valid outputs/checkpoints.
 
 SFT optimizes both the slow semantic/EOS objective and the fast codebook
 teacher-forcing objective. Set `FREEZE_SLOW_AR=true` or `FREEZE_FAST_AR=true`
