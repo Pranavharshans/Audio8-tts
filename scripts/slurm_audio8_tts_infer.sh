@@ -9,8 +9,8 @@
 
 set -euo pipefail
 
-if [[ $# -lt 4 || $# -gt 5 ]]; then
-  echo "Usage: $0 PROJECT_ROOT MODEL_DIR VENV OUTPUT_WAV [TEXT]" >&2
+if [[ $# -lt 4 || $# -gt 7 || $# == 6 ]]; then
+  echo "Usage: $0 PROJECT_ROOT MODEL_DIR VENV OUTPUT_WAV [TEXT [REFERENCE_AUDIO REFERENCE_TEXT]]" >&2
   exit 2
 fi
 
@@ -19,6 +19,8 @@ MODEL_DIR="$(realpath "$2")"
 VENV="$(realpath "$3")"
 OUTPUT_WAV="$4"
 TEXT="${5:-നമസ്കാരം. മലയാളം ശബ്ദസംശ്ലേഷണത്തിന്റെ ഒരു പരീക്ഷണമാണിത്.}"
+REFERENCE_AUDIO="${6:-}"
+REFERENCE_TEXT="${7:-}"
 
 mkdir -p "$(dirname "$OUTPUT_WAV")"
 export HF_HOME="${HF_HOME:-${TMPDIR:-/tmp}/huggingface}"
@@ -28,14 +30,20 @@ echo "[audio8_tts.infer] job=${SLURM_JOB_ID:-local} host=$(hostname)"
 echo "[audio8_tts.infer] model=${MODEL_DIR}"
 echo "[audio8_tts.infer] output=${OUTPUT_WAV}"
 
-cd "$PROJECT_ROOT"
-"${VENV}/bin/python" "${PROJECT_ROOT}/audio8_tts_infer.py" \
-  --model "$MODEL_DIR" \
-  --device cuda \
-  --dtype bfloat16 \
-  --text "$TEXT" \
-  --output "$OUTPUT_WAV" \
-  --seed 42 \
+infer_args=(
+  --model "$MODEL_DIR"
+  --device cuda
+  --dtype bfloat16
+  --text "$TEXT"
+  --output "$OUTPUT_WAV"
+  --seed 42
   --overwrite
+)
+if [[ -n "$REFERENCE_AUDIO" ]]; then
+  infer_args+=(--reference-audio "$REFERENCE_AUDIO" --reference-text "$REFERENCE_TEXT")
+fi
+
+cd "$PROJECT_ROOT"
+"${VENV}/bin/python" "${PROJECT_ROOT}/audio8_tts_infer.py" "${infer_args[@]}"
 
 ls -lh "$OUTPUT_WAV"
