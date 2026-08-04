@@ -41,6 +41,8 @@ mkdir -p "${HF_HOME}" "${JOB_OUTPUT_DIR}"
 export http_proxy=http://proxy.nhr.fau.de:80
 export https_proxy=http://proxy.nhr.fau.de:80
 export HF_HOME
+export TRITON_CACHE_DIR="${TMPDIR:-${JOB_OUTPUT_DIR}/.triton}"
+mkdir -p "${TRITON_CACHE_DIR}"
 export PYTHON="${VENV}/bin/python"
 export MODEL
 export TRAIN_JSONL
@@ -51,6 +53,11 @@ fi
 export OUTPUT_DIR="${JOB_OUTPUT_DIR}"
 export EXPORT_DIR="${OUTPUT_DIR}/export"
 export NPROC_PER_NODE="${#visible_gpus[@]}"
+if [[ "${NPROC_PER_NODE}" == "1" ]]; then
+  # ZeRO provides no sharding benefit on one GPU, while importing DeepSpeed
+  # requires an Alex CUDA compiler module solely for optional-op detection.
+  export DEEPSPEED_CONFIG=none
+fi
 export BATCH_SIZE="${BATCH_SIZE:-1}"
 export GRADIENT_ACCUMULATION_STEPS="${GRADIENT_ACCUMULATION_STEPS:-16}"
 export NUM_TRAIN_EPOCHS="${NUM_TRAIN_EPOCHS:-3}"
