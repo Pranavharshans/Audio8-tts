@@ -498,6 +498,10 @@ The optional ninth and tenth arguments control fast-AR and slow-AR freezing,
 respectively. They default to `true` and `false` for the pilot workflow. Append
 `false false` to train both branches.
 
+Pass `none` as the third argument to keep the model's original tokenizer and
+skip vocabulary expansion. This is useful as a controlled comparison when
+newly mined language tokens hurt text-to-speech alignment.
+
 After the pilot completes and generated Malayalam samples have been checked,
 submit full preparation by replacing `2000` with `all`. The dataset contains
 71,608 utterances and about 20.8 GB of Parquet data; the extracted audio plus

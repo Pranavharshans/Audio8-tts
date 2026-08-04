@@ -12,7 +12,12 @@ unset SLURM_EXPORT_ENV
 
 PROJECT_ROOT="$(realpath "${1:?usage: $0 PROJECT_ROOT TRAIN_JSONL TOKENS_JSON [MODEL] [VENV] [OUTPUT_DIR] [EVAL_JSONL] [HF_HOME] [FREEZE_FAST_AR] [FREEZE_SLOW_AR]}")"
 TRAIN_JSONL="$(realpath "${2:?TRAIN_JSONL is required}")"
-ADDITIONAL_TOKENS_JSON="$(realpath "${3:?TOKENS_JSON is required}")"
+TOKENS_INPUT="${3:?TOKENS_JSON is required; pass 'none' to keep the original tokenizer}"
+if [[ "${TOKENS_INPUT}" == "none" ]]; then
+  ADDITIONAL_TOKENS_JSON=""
+else
+  ADDITIONAL_TOKENS_JSON="$(realpath "${TOKENS_INPUT}")"
+fi
 MODEL="${4:-Audio8/Audio8-TTS-Preview-0.6b}"
 VENV="${5:-${PROJECT_ROOT}/.venv}"
 JOB_OUTPUT_DIR="${6:-${PROJECT_ROOT}/outputs/audio8_tts_ml}"
@@ -84,7 +89,7 @@ export RESUME_MODE=auto
 export REPORT_TO=tensorboard
 
 echo "[audio8_tts.slurm] job=${SLURM_JOB_ID} host=$(hostname) gpus=${NPROC_PER_NODE}"
-echo "[audio8_tts.slurm] train=${TRAIN_JSONL} tokens=${ADDITIONAL_TOKENS_JSON}"
+echo "[audio8_tts.slurm] train=${TRAIN_JSONL} tokens=${ADDITIONAL_TOKENS_JSON:-none}"
 echo "[audio8_tts.slurm] output=${OUTPUT_DIR}"
 echo "[audio8_tts.slurm] freeze_slow_ar=${FREEZE_SLOW_AR} freeze_fast_ar=${FREEZE_FAST_AR}"
 
