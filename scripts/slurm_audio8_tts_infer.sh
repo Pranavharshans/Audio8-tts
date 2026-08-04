@@ -15,7 +15,13 @@ if [[ $# -lt 4 || $# -gt 7 || $# == 6 ]]; then
 fi
 
 PROJECT_ROOT="$(realpath "$1")"
-MODEL_DIR="$(realpath "$2")"
+MODEL_INPUT="$2"
+if [[ -e "$MODEL_INPUT" ]]; then
+  MODEL_DIR="$(realpath "$MODEL_INPUT")"
+else
+  # Allow a Hugging Face model ID such as Audio8/Audio8-TTS-Preview-0.6b.
+  MODEL_DIR="$MODEL_INPUT"
+fi
 VENV="$(realpath "$3")"
 OUTPUT_WAV="$4"
 TEXT="${5:-നമസ്കാരം. മലയാളം ശബ്ദസംശ്ലേഷണത്തിന്റെ ഒരു പരീക്ഷണമാണിത്.}"
