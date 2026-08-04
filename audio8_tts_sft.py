@@ -438,7 +438,8 @@ def main() -> None:
         trainer.save_metrics("eval", metrics)
 
     final_model = actual_model(trainer.model)
-    final_model.gradient_checkpointing_disable()
+    if bool(getattr(final_model, "supports_gradient_checkpointing", False)):
+        final_model.gradient_checkpointing_disable()
     final_model.config.use_gradient_checkpointing = False
     sanitize_config_for_save(final_model.config)
     trainer.save_model(training_args.output_dir)

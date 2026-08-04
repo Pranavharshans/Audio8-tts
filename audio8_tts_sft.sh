@@ -73,7 +73,7 @@ fi
   --save_total_limit "${SAVE_TOTAL_LIMIT:-3}" \
   --dataloader_num_workers "${DATALOADER_NUM_WORKERS:-0}" \
   --bf16 "${BF16:-true}" \
-  --gradient_checkpointing "${GRADIENT_CHECKPOINTING:-true}" \
+  --gradient_checkpointing "${GRADIENT_CHECKPOINTING:-false}" \
   --freeze_slow_ar "${FREEZE_SLOW_AR:-false}" \
   --freeze_fast_ar "${FREEZE_FAST_AR:-false}" \
   --resume_mode "${RESUME_MODE:-none}" \

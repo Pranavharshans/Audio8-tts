@@ -65,7 +65,9 @@ export LEARNING_RATE="${LEARNING_RATE:-5e-6}"
 export FREEZE_SLOW_AR=false
 export FREEZE_FAST_AR=true
 export BF16=true
-export GRADIENT_CHECKPOINTING=true
+# ArkttsModel does not advertise Transformers gradient-checkpointing support.
+# Enabling this makes Trainer fail before the first optimization step.
+export GRADIENT_CHECKPOINTING=false
 export DATALOADER_NUM_WORKERS="${DATALOADER_NUM_WORKERS:-4}"
 export EVAL_STEPS="${EVAL_STEPS:-100}"
 export SAVE_STEPS="${SAVE_STEPS:-100}"
