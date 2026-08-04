@@ -29,6 +29,8 @@ REFERENCE_AUDIO="${6:-}"
 REFERENCE_TEXT="${7:-}"
 
 mkdir -p "$(dirname "$OUTPUT_WAV")"
+export http_proxy="${http_proxy:-http://proxy.nhr.fau.de:80}"
+export https_proxy="${https_proxy:-http://proxy.nhr.fau.de:80}"
 export HF_HOME="${HF_HOME:-${TMPDIR:-/tmp}/huggingface}"
 export TOKENIZERS_PARALLELISM=false
 
