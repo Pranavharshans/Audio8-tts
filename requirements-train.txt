@@ -3,5 +3,4 @@
 # partially consumed remote Parquet shards (huggingface/datasets#7357).
 datasets==3.1.0
 accelerate>=1.10
-deepspeed>=0.17
 tensorboard>=2.16

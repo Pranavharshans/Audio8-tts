@@ -1,0 +1,2 @@
+-r requirements-train.txt
+deepspeed>=0.17

@@ -425,10 +425,11 @@ For multi-node training, set `NNODES`, `NODE_RANK`, `MASTER_ADDR`, and
 overridden through the environment variables in `audio8_tts_sft.sh`; additional
 Transformers arguments may be appended to the command.
 
-The launcher defaults to the included `configs/deepspeed_zero2.json`. Set
-`DEEPSPEED_CONFIG=none` to disable DeepSpeed or provide another config path for
-the cluster. Every distributed rank must see the same model, prepared manifest,
-and additional-token JSON paths.
+DeepSpeed is optional. Install `requirements-deepspeed.txt` and set
+`DEEPSPEED_CONFIG=configs/deepspeed_zero2.json` to enable the included ZeRO-2
+configuration. The default uses ordinary PyTorch distributed training. Every
+distributed rank must see the same model, prepared manifest, and
+additional-token JSON paths.
 
 ### FAU Alex workflow
 

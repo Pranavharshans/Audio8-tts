@@ -10,8 +10,9 @@
 set -euo pipefail
 unset SLURM_EXPORT_ENV
 
-PROJECT_ROOT="$(realpath "${1:?usage: $0 PROJECT_ROOT VENV}")"
+PROJECT_ROOT="$(realpath "${1:?usage: $0 PROJECT_ROOT VENV [WITH_DEEPSPEED]}")"
 VENV="${2:?VENV is required and should normally be under \$WORK}"
+WITH_DEEPSPEED="${3:-false}"
 
 module purge
 module load python
@@ -28,6 +29,13 @@ source "${VENV}/bin/activate"
 
 python -m pip install --upgrade pip wheel
 python -m pip install -r "${PROJECT_ROOT}/requirements-train.txt"
+if [[ "${WITH_DEEPSPEED}" == "true" ]]; then
+  python -m pip install -r "${PROJECT_ROOT}/requirements-deepspeed.txt"
+elif python -m pip show deepspeed >/dev/null 2>&1; then
+  # Accelerate imports any installed DeepSpeed package even when ZeRO is off.
+  # Remove stale installs from single-GPU environments that lack CUDA nvcc.
+  python -m pip uninstall -y deepspeed
+fi
 
 python - <<'PY'
 import torch
