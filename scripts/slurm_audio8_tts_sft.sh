@@ -10,7 +10,7 @@
 set -euo pipefail
 unset SLURM_EXPORT_ENV
 
-PROJECT_ROOT="$(realpath "${1:?usage: $0 PROJECT_ROOT TRAIN_JSONL TOKENS_JSON [MODEL] [VENV] [OUTPUT_DIR] [EVAL_JSONL] [HF_HOME]}")"
+PROJECT_ROOT="$(realpath "${1:?usage: $0 PROJECT_ROOT TRAIN_JSONL TOKENS_JSON [MODEL] [VENV] [OUTPUT_DIR] [EVAL_JSONL] [HF_HOME] [FREEZE_FAST_AR] [FREEZE_SLOW_AR]}")"
 TRAIN_JSONL="$(realpath "${2:?TRAIN_JSONL is required}")"
 ADDITIONAL_TOKENS_JSON="$(realpath "${3:?TOKENS_JSON is required}")"
 MODEL="${4:-Audio8/Audio8-TTS-Preview-0.6b}"
@@ -18,6 +18,15 @@ VENV="${5:-${PROJECT_ROOT}/.venv}"
 JOB_OUTPUT_DIR="${6:-${PROJECT_ROOT}/outputs/audio8_tts_ml}"
 EVAL_JSONL="${7:-}"
 HF_HOME="${8:-${PROJECT_ROOT}/.cache/huggingface}"
+FREEZE_FAST_AR_VALUE="${9:-true}"
+FREEZE_SLOW_AR_VALUE="${10:-false}"
+
+for value in "${FREEZE_FAST_AR_VALUE}" "${FREEZE_SLOW_AR_VALUE}"; do
+  if [[ "${value}" != "true" && "${value}" != "false" ]]; then
+    echo "Freeze controls must be 'true' or 'false'; got: ${value}" >&2
+    exit 2
+  fi
+done
 
 if [[ ! -x "${VENV}/bin/python" ]]; then
   echo "Python environment does not exist: ${VENV}" >&2
@@ -62,8 +71,8 @@ export BATCH_SIZE="${BATCH_SIZE:-1}"
 export GRADIENT_ACCUMULATION_STEPS="${GRADIENT_ACCUMULATION_STEPS:-16}"
 export NUM_TRAIN_EPOCHS="${NUM_TRAIN_EPOCHS:-3}"
 export LEARNING_RATE="${LEARNING_RATE:-5e-6}"
-export FREEZE_SLOW_AR=false
-export FREEZE_FAST_AR=true
+export FREEZE_SLOW_AR="${FREEZE_SLOW_AR_VALUE}"
+export FREEZE_FAST_AR="${FREEZE_FAST_AR_VALUE}"
 export BF16=true
 # ArkttsModel does not advertise Transformers gradient-checkpointing support.
 # Enabling this makes Trainer fail before the first optimization step.
@@ -77,6 +86,7 @@ export REPORT_TO=tensorboard
 echo "[audio8_tts.slurm] job=${SLURM_JOB_ID} host=$(hostname) gpus=${NPROC_PER_NODE}"
 echo "[audio8_tts.slurm] train=${TRAIN_JSONL} tokens=${ADDITIONAL_TOKENS_JSON}"
 echo "[audio8_tts.slurm] output=${OUTPUT_DIR}"
+echo "[audio8_tts.slurm] freeze_slow_ar=${FREEZE_SLOW_AR} freeze_fast_ar=${FREEZE_FAST_AR}"
 
 srun \
   --ntasks=1 \

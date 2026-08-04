@@ -494,6 +494,10 @@ time-limited job is resubmitted. Check jobs with `squeue --me`, inspect a job
 with `scontrol show job JOB_ID`, cancel with `scancel JOB_ID`, and read the
 `audio8-*.out`/`audio8-*.err` files created in the submission directory.
 
+The optional ninth and tenth arguments control fast-AR and slow-AR freezing,
+respectively. They default to `true` and `false` for the pilot workflow. Append
+`false false` to train both branches.
+
 After the pilot completes and generated Malayalam samples have been checked,
 submit full preparation by replacing `2000` with `all`. The dataset contains
 71,608 utterances and about 20.8 GB of Parquet data; the extracted audio plus
