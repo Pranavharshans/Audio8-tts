@@ -319,6 +319,8 @@ SGLang Omni package and its Python dependencies are installed.
 
 ## Supervised Fine-tuning
 
+The completed Malayalam workflow is documented in [malayalam training.md](<malayalam training.md>), including the successful pilot configuration, FAU Alex Slurm commands, checkpoint behavior, and follow-up evaluation recommendations.
+
 Install the training dependencies first:
 
 ```bash
