@@ -29,6 +29,11 @@ def parse_args() -> argparse.Namespace:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("--dataset", default="Praha-Labs/TTS-Ml")
+    parser.add_argument(
+        "--revision",
+        default=None,
+        help="Optional Hugging Face dataset revision (commit, tag, or branch).",
+    )
     parser.add_argument("--config", default="default")
     parser.add_argument("--split", default="train")
     parser.add_argument("--output-dir", type=Path, required=True)
@@ -59,6 +64,7 @@ def iter_dataset_rows(args: argparse.Namespace) -> Iterable[dict[str, Any]]:
         split=args.split,
         streaming=True,
         cache_dir=os.environ.get("HF_DATASETS_CACHE"),
+        revision=args.revision,
     )
     dataset = dataset.cast_column(args.audio_column, Audio(decode=False))
     return dataset

@@ -162,3 +162,50 @@ shownicerquota.pl
 ```
 
 To prepare the full dataset, replace `2000` with `all` in the preparation command. Full preparation and SFT may require multiple 24-hour submissions; the preparation scripts reuse valid outputs and the training wrapper resumes checkpoints.
+
+## Single-GPU Vast.ai full run
+
+Vast.ai does not need Slurm, FAU modules, `srun`, or the Alex proxy settings. The
+standalone launcher performs environment setup, downloads the full
+`Praha-Labs/TTS-Ml` dataset, precomputes codec indices, and starts single-GPU
+SFT using the original pretrained tokenizer:
+
+```bash
+cd /workspace/audio8tts
+DATA_ROOT=/workspace/audio8_ml \
+VENV=/workspace/venvs/audio8tts \
+bash scripts/vast_audio8_ml_full.sh all
+```
+
+Keep `/workspace/audio8_ml` on persistent storage. The full dataset is the
+default (`MAX_SAMPLES=all`), the eval split contains 500 examples, the fast
+acoustic branch is frozen, and the slow semantic/text branch is trained for
+three epochs with effective batch size 16. No Malayalam tokens are mined or
+added. The dataset is pinned to the Hugging Face commit current when this
+launcher was added; set `DATASET_REVISION` explicitly to select another
+revision. Checkpoints are saved every 250 optimizer steps and a repeated `train`
+or `all` invocation resumes the latest checkpoint automatically.
+
+The stages can also be run independently, which is useful when changing Vast
+instances between preparation and training:
+
+```bash
+bash scripts/vast_audio8_ml_full.sh setup
+bash scripts/vast_audio8_ml_full.sh prepare
+bash scripts/vast_audio8_ml_full.sh train
+```
+
+For a smoke test before paying for the full materialization, use a separate
+data directory so the pilot cannot be mistaken for the full manifests:
+
+```bash
+DATA_ROOT=/workspace/audio8_ml_pilot \
+MAX_SAMPLES=2000 \
+EVAL_SAMPLES=100 \
+bash scripts/vast_audio8_ml_full.sh all
+```
+
+If codec preparation runs out of memory, rerun with
+`PREP_BATCH_SIZE=1`. Training defaults can be overridden through the existing
+environment controls, for example `GRADIENT_ACCUMULATION_STEPS`,
+`NUM_TRAIN_EPOCHS`, `LEARNING_RATE`, `SAVE_STEPS`, and `EVAL_STEPS`.
