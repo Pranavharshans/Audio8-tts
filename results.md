@@ -68,6 +68,7 @@ Workload: `assets/training/Maya.wav`, matching transcript from the repository gu
 | E006 | `c09b0c2` + runtime config | Reduce streaming chunk from 12 to 4 codec frames, retain one-frame guard | deterministic and same length; versus SGLang full decode: cosine 0.999981, SNR 44.31 dB | 1,001.29 ms | 1,005.80 ms | **132.01 ms** | **0.415** | TTFA candidate: -39.8% TTFA, +16.3% total latency |
 | E007 | `7dc7cda` + runtime config | Reduce streaming chunk from 4 to 2 codec frames, retain one-frame guard | deterministic and same length; versus SGLang full decode: cosine 0.999982, SNR 44.40 dB | 1,201.19 ms | 1,206.58 ms | **105.34 ms** | **0.497** | aggressive TTFA profile; RTF target met with little margin |
 | E008 | `621bbb1` + runtime config | Enable SGLang TorchInductor compilation with CUDA Graph and 4-frame chunks | fail: output changed from 106,496 to 116,736 samples | 991.37 ms | 997.22 ms | 120.38 ms | 0.375 reported | reject: duration/output changed for ~1% latency gain |
+| E009 | `72dc8c0` + runtime config | Enable greedy-only sampling fast path, compile off, 4-frame chunks | exact PCM hash match to E006 | **971.00 ms** | **977.53 ms** | **125.22 ms** | **0.402** | accept for greedy requests: -3.0% total, -5.1% TTFA |
 
 ## Detailed experiments
 
@@ -136,6 +137,12 @@ Workload: `assets/training/Maya.wav`, matching transcript from the repository gu
 - The generated result changed from 106,496 samples (2.41488 seconds) to 116,736 samples (2.64707 seconds), with a different deterministic PCM hash. This reproduces the output-length divergence seen in E003b.
 - The reported RTF of 0.375 uses the longer candidate audio and therefore cannot be treated as a quality-preserving improvement. E008 is rejected.
 
+### E009 — greedy-only sampling fast path
+
+- The E006 four-frame streaming configuration was held constant while `AUDIO8_TTS_GREEDY_FASTPATH=1` bypassed sorting, top-k/top-p filtering, probability construction, and random sampling for greedy requests.
+- Total p50 improved from 1,001.29 ms to 971.00 ms (-3.0%); TTFA improved from 132.01 ms to 125.22 ms (-5.1%); RTF improved from 0.415 to 0.402.
+- All six requests produced exactly the same 106,496-sample output and PCM hash as E006 (`608e655df117e9e8e321f441aaba7bb53521d589410d2280b6f4feb062db4cd3`). The optimization is accepted for greedy inference only; sampled requests must continue to use the general sampling path.
+
 ## Final comparison
 
-No optimization is accepted for production yet. E005 is the best total-latency profile, E006 is the safer low-TTFA profile, and E007 reaches the lowest measured TTFA at 105 ms while narrowly retaining RTF <= 0.5. E008 confirms that TorchInductor is not quality-safe for this path. The remaining SGLang candidates require a multi-prompt objective quality suite because their generation differs numerically from eager. E002 remains the leading exact-artifact optimization, although its speedup is too small to meet the RTF target alone.
+E009 is accepted as an exact-output optimization for greedy SGLang requests. E005 remains the best total-latency profile without that fast path, E009 is the safer low-TTFA profile, and E007 reaches the lowest measured TTFA at 105 ms while narrowly retaining RTF <= 0.5. E008 confirms that TorchInductor is not quality-safe for this path. The SGLang generation path still requires a multi-prompt objective quality suite before production acceptance because it differs numerically from eager. E002 remains the leading exact-artifact eager optimization, although its speedup is too small to meet the RTF target alone.
