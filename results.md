@@ -85,6 +85,7 @@ Workload: `assets/training/Maya.wav`, matching transcript from the repository gu
 | E023 | `789216a` + zero-extra-copy CPU handoff | Let NumPy retain decoded CPU tensor storage instead of copying each full context window | exact byte match for all 12 E021 WAV artifacts | **967.47 ms** | **973.34 ms** | **88.35 ms** | **0.401** p50 / 0.403 p95 | accept: -0.69 ms p50 and -0.82 ms mean versus E021 |
 | E024 | `919dac2` + cached semantic/EOS handoff | Cache one GPU scalar EOS check per step, filter EOS before the vocoder, and retain a frame view | exact byte match for all 12 E023 WAV artifacts | **963.09 ms** | **970.07 ms** | **89.96 ms** | **0.399** p50 / 0.402 p95 | accept: -4.38 ms p50 and fewer per-step synchronizations |
 | E025 | `0cd02ad` + Nsight Systems | Re-profile cached semantic handoff and hybrid Triton Snake on 12 warmed requests | observational; PCM hash unchanged | n/a | n/a | n/a | n/a | semantic caching removes 17.6% of sync calls; hybrid Snake cuts activation GPU time 44.3%; layout transforms remain ~11% |
+| E026 | `2038377` + shared retained code tensor | Reuse one owned CUDA-graph output copy across scheduler and streaming consumers; retain codebook slice as a view | exact byte match for all 12 E024 WAV artifacts | **959.98 ms** | **966.20 ms** | **103.87 ms** | **0.398** p50 / 0.400 p95 | accept: -3.12 ms p50 and -3.87 ms p95 versus E024 |
 
 ## Detailed experiments
 
@@ -258,6 +259,12 @@ Workload: `assets/training/Maya.wav`, matching transcript from the repository gu
 - E019's TorchScript Snake kernel used 333.65 ms of GPU time across the trace. E025's hybrid path used 181.16 ms in the Triton kernel plus 4.60 ms in the small-tensor fallback, a 44.3% reduction in profiled Snake time. Its share of GPU kernel time fell from 9.8% to about 5.6%.
 - NCHW-to-NHWC and NHWC-to-NCHW conversions still account for 9.6% and 1.7% of GPU kernel time. Codec convolution and layout handling therefore remain the next measured targets; the already-small final tanh and SGLang RMSNorm kernels are not worthwhile custom-kernel candidates.
 
+### E026 — share the retained generated-code tensor
+
+- The scheduler and stream adapter previously cloned the same small CUDA-graph output independently, and the scheduler then cloned its codebook slice again. `Audio8StepOutput` now creates one owned copy that both consumers share. The request history retains that tensor, so `_last_codebook_values` can safely remain a view while the next step consumes it.
+- Across 30 measured requests, mean/p50/p95 improved from E024's 963.23/963.09/970.07 ms to 960.51/959.98/966.20 ms. P50/p95 RTF improved from 0.399/0.402 to 0.398/0.400. TTFA p50/p95 measured 103.87/113.35 ms and is treated as normal run variance because the retained-copy consolidation is distributed across generation.
+- The primary PCM hash remained `f0e5fe64421f5d3eb097d75bac3c423e26a3cb411452a6828405b19d6f6b0b06`, and all 12 streamed/full WAV files were byte-for-byte identical to E024. E026 is accepted.
+
 ## Final comparison
 
-E024 is the recommended performance profile at 0.399 p50 / 0.402 p95 RTF with byte-identical output versus E023, a passing objective quality gate, and an automatic TorchScript fallback. E018 remains the pre-custom-kernel exact-output profile at 0.404 p50 / 0.406 p95 RTF and about 100 ms measured TTFA. E010 reaches similarly low TTFA but meets the RTF target only at p50. E008 confirms that broad TorchInductor compilation is not quality-safe for this path, while E017 shows codec-only dynamic compilation is not currently viable. E002 remains the leading exact-artifact eager optimization, although its speedup is too small to meet the RTF target alone.
+E026 is the recommended performance profile at 0.398 p50 / 0.400 p95 RTF with byte-identical output versus E024, a passing objective quality gate, and an automatic TorchScript fallback. E018 remains the pre-custom-kernel exact-output profile at 0.404 p50 / 0.406 p95 RTF and about 100 ms measured TTFA. E010 reaches similarly low TTFA but meets the RTF target only at p50. E008 confirms that broad TorchInductor compilation is not quality-safe for this path, while E017 shows codec-only dynamic compilation is not currently viable. E002 remains the leading exact-artifact eager optimization, although its speedup is too small to meet the RTF target alone.

@@ -27,11 +27,19 @@ if TYPE_CHECKING:
 class Audio8StepOutput:
     codes: torch.Tensor
     semantic: int | None = None
+    retained_codes: torch.Tensor | None = None
 
     def get_semantic(self) -> int:
         if self.semantic is None:
             self.semantic = int(self.codes[0, -1].item())
         return self.semantic
+
+    def get_retained_codes(self) -> torch.Tensor:
+        if self.retained_codes is None:
+            # CUDA Graph outputs are reusable; retain one owned copy for every
+            # downstream consumer instead of cloning independently per stage.
+            self.retained_codes = self.codes.clone()
+        return self.retained_codes
 
 
 @dataclass
@@ -63,14 +71,16 @@ class Audio8IterationController:
             output.data = None
             req.is_chunked -= 1
             return
-        codes = output.data.codes.clone()
+        codes = output.data.get_retained_codes()
         semantic = output.data.get_semantic()
         if semantic != self.eos_token_id:
             # HF generation does not send the EOS step to the waveform codec.
             if data.output_codes:
                 data._previous_semantic_tokens.append(semantic)
             data.output_codes.append(codes)
-            data._last_codebook_values = codes[1:, 0].clone()
+            # `codes` is retained in output_codes, so this view remains valid
+            # until the next generated step consumes it.
+            data._last_codebook_values = codes[1:, 0]
         req.output_ids.append(semantic)
         if not req.finished() and req.decode_batch_idx == 0:
             self.tree_cache.cache_unfinished_req(req)

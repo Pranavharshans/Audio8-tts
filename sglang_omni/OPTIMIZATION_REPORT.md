@@ -107,6 +107,11 @@ filtered before vocoder enqueue, and the vocoder retains a view of each
 codebook frame instead of cloning it. These changes remove synchronization and
 copy overhead without changing generated codes or codec math.
 
+The reusable CUDA Graph output is copied once per generated frame into owned
+storage. Request history and the stream adapter share that retained tensor,
+and the next-step codebook state uses a lifetime-safe view of it, replacing two
+additional device-to-device copies.
+
 ### Hybrid Triton Snake kernel
 
 ```text

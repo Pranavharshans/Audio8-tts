@@ -88,7 +88,7 @@ def create_audio8_engine(
             return None
         if output.data.get_semantic() == eos_token_id:
             return None
-        codes = output.data.codes.clone()
+        codes = output.data.get_retained_codes()
         if stream_fn is not None:
             stream_fn(request.request_id, codes)
         return codes
