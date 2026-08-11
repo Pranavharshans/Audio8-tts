@@ -70,6 +70,17 @@ showed that the original first reference encode could produce a different
 conditioning result from subsequent calls; the warm-up makes the first real
 request match the stable path without changing steady-state inference.
 
+### Optional codec weight baking
+
+```text
+AUDIO8_TTS_BAKE_CODEC_WEIGHT_NORM=0|1
+```
+
+Enabled by default, inference-invariant legacy and parametrized weight
+normalization is materialized once after loading each codec instance. This
+removes repeated weight-normalization kernels from every streaming decode;
+set the variable to `0` only for exact A/B validation.
+
 ### Portable non-Hopper attention path
 
 `AUDIO8_TTS_ATTENTION_BACKEND` controls both the SGLang slow-AR backend and the

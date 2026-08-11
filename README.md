@@ -244,6 +244,10 @@ defaults to `fa3` on Hopper and `flashinfer` on other GPU architectures; set it
 explicitly to override. Set `SGLANG_OMNI_SITE_PACKAGES` when the runtime
 dependencies are installed in a separate site-packages directory.
 
+Codec weight normalization is baked once at load time by default, removing
+inference-invariant kernels from every streaming chunk. Set
+`AUDIO8_TTS_BAKE_CODEC_WEIGHT_NORM=0` only for A/B debugging.
+
 ### Troubleshooting
 
 - Install the distribution package that provides `libnuma` if `sgl_kernel`

@@ -75,6 +75,7 @@ Workload: `assets/training/Maya.wav`, matching transcript from the repository gu
 | E013 | `f7fd5b9` + backend resolver fix | Auto-select portable attention on non-Hopper GPUs; no backend override | exact PCM hash match to E011 | **1,030.07 ms** | **1,035.51 ms** | **113.90 ms** | **0.427** p50 / 0.429 p95 | accept: RTX 4060 Ti deployment works without manual backend config |
 | E014 | `fec7a20` + quality harness and reference-encoder warm-up | Six-prompt eager/stream/full quality suite; 3 no-reference + 3 reference-voice prompts | pass: stream/full cosine >0.999; macro WER equal; mean speaker cosine delta -0.0028 | n/a | n/a | n/a | n/a | accept quality gate; fixes first-reference cold-start divergence |
 | E015 | `152569e` + Nsight Systems | Profile accepted 3-frame serving path to select kernel-fusion targets | observational; no output change | n/a | n/a | n/a | n/a | weight norm 7.3% GPU time; layout transforms 11.4%; target kernel elimination first |
+| E016 | `8d5b252` + codec weight baking | Materialize 80 inference-invariant weight-normalization hooks per codec after load | exact byte match for all 12 E014 WAV artifacts | **1,012.17 ms** | **1,017.39 ms** | **112.62 ms** | **0.419** p50 / 0.421 p95 | accept and enable by default: -1.7% total latency |
 
 ## Detailed experiments
 
@@ -186,6 +187,12 @@ Workload: `assets/training/Maya.wav`, matching transcript from the repository gu
 - Runtime weight-normalization kernels consumed 7.3% of GPU kernel time across 547 launches. NCHW-to-NHWC and NHWC-to-NCHW transforms consumed 11.4% combined, while codec convolutions occupied most of the remaining top kernels.
 - CUDA API time was dominated by `cudaStreamSynchronize` (58.9%), followed by `cudaMemcpyAsync` (20.7%) and kernel launch calls. The first custom-kernel phase therefore prioritizes eliminating inference-invariant weight-normalization work, followed by codec layout/elementwise fusion; the already-fused RMSNorm kernels account for only about 0.1% and are not worth replacing.
 
+### E016 — bake codec weight normalization
+
+- Legacy and parametrized weight-normalization hooks are now materialized once after loading each codec. The runtime logged 80 baked modules for the vocoder codec, eliminating repeated normalization kernels from each streaming decode.
+- Total p50 improved from E013's 1,030.07 ms to 1,012.17 ms (-1.7%); TTFA improved from 113.90 ms to 112.62 ms; p50 RTF improved from 0.427 to 0.419.
+- The primary benchmark retained the exact E011/E013 PCM hash. More importantly, every streamed and full-decode WAV across the six-prompt E014 suite was byte-for-byte identical before and after weight baking, including all three reference-conditioned prompts. E016 is accepted and enabled by default.
+
 ## Final comparison
 
-E011/E013 is the recommended low-TTFA profile at 114 ms with stable RTF headroom and a passing six-prompt objective quality gate. E010 reaches 102 ms TTFA but meets the RTF target only at p50. E008 confirms that TorchInductor is not quality-safe for this path. E002 remains the leading exact-artifact eager optimization, although its speedup is too small to meet the RTF target alone.
+E016 is the recommended low-TTFA profile at 113 ms with stable RTF headroom, exact quality-suite artifacts versus E014, and a passing objective quality gate versus eager. E010 reaches 102 ms TTFA but meets the RTF target only at p50. E008 confirms that TorchInductor is not quality-safe for this path. E002 remains the leading exact-artifact eager optimization, although its speedup is too small to meet the RTF target alone.

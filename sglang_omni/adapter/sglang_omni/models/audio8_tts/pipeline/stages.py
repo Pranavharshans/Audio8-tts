@@ -36,6 +36,24 @@ def _load_config(model_path: str) -> SimpleNamespace:
         return SimpleNamespace(**json.load(handle))
 
 
+def _bake_codec_weight_norm(codec: Any) -> int:
+    from torch.nn.utils import parametrize, remove_weight_norm
+
+    baked = 0
+    for module in codec.modules():
+        parametrizations = getattr(module, "parametrizations", None)
+        if parametrizations is not None and "weight" in parametrizations:
+            parametrize.remove_parametrizations(module, "weight", leave_parametrized=True)
+            baked += 1
+        try:
+            remove_weight_norm(module)
+        except ValueError:
+            pass
+        else:
+            baked += 1
+    return baked
+
+
 def _load_codec(model_path: str, device: str) -> Any:
     model_dir = Path(model_path)
     module_path = model_dir / "modeling_arktts_codec.py"
@@ -67,7 +85,11 @@ def _load_codec(model_path: str, device: str) -> Any:
     }
     codec.load_state_dict(state, strict=True, assign=True)
     dtype = torch.float32 if device == "cpu" else torch.bfloat16
-    return codec.eval().to(device=device, dtype=dtype)
+    codec = codec.eval().to(device=device, dtype=dtype)
+    if os.getenv("AUDIO8_TTS_BAKE_CODEC_WEIGHT_NORM", "1") == "1":
+        baked = _bake_codec_weight_norm(codec)
+        logger.info("Baked weight normalization into %d codec modules", baked)
+    return codec
 
 
 def _load_audio(audio_path: str, sample_rate: int) -> torch.Tensor:
