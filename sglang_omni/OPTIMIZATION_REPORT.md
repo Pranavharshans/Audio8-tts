@@ -55,8 +55,9 @@ AUDIO8_TTS_GREEDY_FASTPATH=0|1
 
 When enabled, sampling is replaced by a direct argmax and all top-k, top-p, and
 random sampling work is removed from the captured graph. This is a server-wide
-mode and must only be enabled when every request is intended to use greedy
-decoding. It overrides per-request sampling settings.
+mode for greedy-only deployments. Requests with a nonzero temperature are
+rejected during preprocessing instead of silently changing their sampling
+semantics; restart without the fast path to serve sampled requests.
 
 The CV3 quality evaluations in this report used
 `AUDIO8_TTS_GREEDY_FASTPATH=0`.

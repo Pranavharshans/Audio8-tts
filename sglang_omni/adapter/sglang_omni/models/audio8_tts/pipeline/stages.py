@@ -146,6 +146,13 @@ def create_preprocessing_executor(
     def preprocess(payload: StagePayload) -> StagePayload:
         inputs = payload.request.inputs or {}
         params = payload.request.params or {}
+        temperature = float(params.get("temperature", 0.8))
+        greedy_fastpath = os.getenv("AUDIO8_TTS_GREEDY_FASTPATH", "0") == "1"
+        if greedy_fastpath and temperature > 0:
+            raise ValueError(
+                "AUDIO8_TTS_GREEDY_FASTPATH=1 only supports temperature=0; "
+                "restart without the fast path to serve sampled requests"
+            )
         if isinstance(inputs, str):
             inputs = {"text": inputs}
         references: list[Reference] | None = None
@@ -173,10 +180,10 @@ def create_preprocessing_executor(
             num_codebooks=config.num_codebooks,
             codebook_size=config.codebook_size,
             max_new_tokens=int(params.get("max_new_tokens", 1024)),
-            temperature=float(params.get("temperature", 0.8)),
+            temperature=temperature,
             top_p=float(params.get("top_p", 0.95)),
             top_k=int(params.get("top_k", 50)),
-            do_sample=float(params.get("temperature", 0.8)) > 0,
+            do_sample=temperature > 0,
             sample_rate=config.codec_sample_rate,
         )
         return store_state(payload, state)

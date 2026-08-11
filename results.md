@@ -71,6 +71,7 @@ Workload: `assets/training/Maya.wav`, matching transcript from the repository gu
 | E009 | `72dc8c0` + runtime config | Enable greedy-only sampling fast path, compile off, 4-frame chunks | exact PCM hash match to E006 | **971.00 ms** | **977.53 ms** | **125.22 ms** | **0.402** | accept for greedy requests: -3.0% total, -5.1% TTFA |
 | E010 | `2ba6a08` + runtime config | Combine greedy-only fast path with 2-frame chunks | exact PCM hash match to E007 | **1,169.01 ms** | **1,214.66 ms** | **102.21 ms** | **0.484** p50 / 0.503 p95 | aggressive: p50 target met, p95 narrowly misses |
 | E011 | `aee19c2` + runtime config | Combine greedy-only fast path with 3-frame chunks | deterministic and same length; versus SGLang full decode: cosine 0.999980, SNR 44.06 dB | **1,029.56 ms** | **1,031.75 ms** | **113.95 ms** | **0.426** p50 / 0.427 p95 | recommended low-TTFA profile with robust RTF margin |
+| E012 | `c2a2940` + safety validation | Reject sampled requests on a greedy-fast-path server | greedy PCM hash unchanged; sampled request rejected | 1,043.08 ms single check | n/a | 129.82 ms single check | 0.432 single check | accept: prevents silent sampling-quality changes |
 
 ## Detailed experiments
 
@@ -156,6 +157,12 @@ Workload: `assets/training/Maya.wav`, matching transcript from the repository gu
 - Three-frame chunks were tested as the midpoint between E009's four-frame profile and E010's aggressive two-frame profile.
 - Total p50 was 1,029.56 ms, TTFA p50 was 113.95 ms, and RTF was 0.426 at p50 and 0.427 at p95. The narrow p50/p95 spread makes this materially more stable than E010 while reducing TTFA by 11.27 ms versus E009.
 - All six requests produced the same 106,496-sample output and PCM hash (`dd6aefc83ab74a1f378f74c5eae60ac2ec7a3cb468ce4f1afb0a6a97525da71e`). Against the same-path full codec decode, cosine similarity was 0.999980 and SNR was 44.06 dB. E011 is the recommended low-TTFA profile.
+
+### E012 — safe greedy-only deployment gate
+
+- The server now rejects nonzero-temperature requests when `AUDIO8_TTS_GREEDY_FASTPATH=1`, rather than silently applying argmax to a request that asked for sampling.
+- A `temperature=0.8` request returned HTTP 500 with an explicit configuration error. A subsequent greedy request completed normally and retained E011's exact 106,496-sample PCM hash (`dd6aefc83ab74a1f378f74c5eae60ac2ec7a3cb468ce4f1afb0a6a97525da71e`).
+- This is a deployment-safety result, not a new performance measurement; the single-request timing is included only as a smoke check.
 
 ## Final comparison
 

@@ -304,6 +304,11 @@ of decoder context and a one-frame boundary guard. Override these values with
 `AUDIO8_TTS_STREAM_CHUNK_FRAMES`, `AUDIO8_TTS_STREAM_CONTEXT_FRAMES`, and
 `AUDIO8_TTS_STREAM_GUARD_FRAMES`.
 
+Set `AUDIO8_TTS_GREEDY_FASTPATH=1` only on greedy-only service instances. It
+removes sampling overhead for `temperature=0` requests and rejects requests
+with a nonzero temperature so their sampling semantics cannot be changed
+silently.
+
 Run the smoke test to verify a deployment:
 
 ```bash
