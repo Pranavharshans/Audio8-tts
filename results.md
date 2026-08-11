@@ -84,6 +84,7 @@ Workload: `assets/training/Maya.wav`, matching transcript from the repository gu
 | E022 | `3cc7872` + cuDNN benchmark mode | Autotune convolution algorithms for dynamic codec shapes | fail: repeated prompt produced varying PCM hashes | **2,513.69 ms** | **4,017.47 ms** | **89.01 ms** p50 / 626.91 p95 | **1.041** p50 / 1.664 p95 | reject and remove: repeated searches cause severe latency and nondeterminism |
 | E023 | `789216a` + zero-extra-copy CPU handoff | Let NumPy retain decoded CPU tensor storage instead of copying each full context window | exact byte match for all 12 E021 WAV artifacts | **967.47 ms** | **973.34 ms** | **88.35 ms** | **0.401** p50 / 0.403 p95 | accept: -0.69 ms p50 and -0.82 ms mean versus E021 |
 | E024 | `919dac2` + cached semantic/EOS handoff | Cache one GPU scalar EOS check per step, filter EOS before the vocoder, and retain a frame view | exact byte match for all 12 E023 WAV artifacts | **963.09 ms** | **970.07 ms** | **89.96 ms** | **0.399** p50 / 0.402 p95 | accept: -4.38 ms p50 and fewer per-step synchronizations |
+| E025 | `0cd02ad` + Nsight Systems | Re-profile cached semantic handoff and hybrid Triton Snake on 12 warmed requests | observational; PCM hash unchanged | n/a | n/a | n/a | n/a | semantic caching removes 17.6% of sync calls; hybrid Snake cuts activation GPU time 44.3%; layout transforms remain ~11% |
 
 ## Detailed experiments
 
@@ -249,6 +250,13 @@ Workload: `assets/training/Maya.wav`, matching transcript from the repository gu
 - EOS is filtered before enqueueing vocoder work, and the vocoder retains a view of the codebook frame instead of issuing a tiny device-to-device clone. Neither change modifies model or codec math.
 - Across 30 measured requests, mean/p50/p95 improved from E023's 967.56/967.47/973.34 ms to 963.23/963.09/970.07 ms. P50/p95 RTF improved from 0.401/0.403 to 0.399/0.402. TTFA p50/p95 measured 89.96/112.58 ms; the 1.61 ms p50 movement versus E023 is treated as run variance because this optimization primarily removes work after generation begins.
 - The primary PCM SHA-256 remained `f0e5fe64421f5d3eb097d75bac3c423e26a3cb411452a6828405b19d6f6b0b06`, and every streamed/full WAV in the six-prompt suite was byte-for-byte identical to E023. E024 is accepted.
+
+### E025 — profile the custom-kernel and synchronization changes
+
+- Nsight Systems captured 12 warmed E024 requests with the same prompt and output hash as the earlier E019 12-request profile. The trace is stored on the benchmark instance at `/workspace/E025_audio8_e024_serving.nsys-rep`; instrumented latency is excluded from performance comparisons.
+- `cudaStreamSynchronize` calls fell from 7,344 to 6,048 (-1,296, or 17.6%) and their total API time fell from 7.91 s to 6.98 s. Device-to-host operations fell from 3,480 to 2,196 (-36.9%), directly confirming that E024 removed duplicate per-token scalar transfers. Device-to-device operations fell from 10,476 to 9,840 (-6.1%), consistent with eliminating the per-vocoder-frame clone.
+- E019's TorchScript Snake kernel used 333.65 ms of GPU time across the trace. E025's hybrid path used 181.16 ms in the Triton kernel plus 4.60 ms in the small-tensor fallback, a 44.3% reduction in profiled Snake time. Its share of GPU kernel time fell from 9.8% to about 5.6%.
+- NCHW-to-NHWC and NHWC-to-NCHW conversions still account for 9.6% and 1.7% of GPU kernel time. Codec convolution and layout handling therefore remain the next measured targets; the already-small final tanh and SGLang RMSNorm kernels are not worthwhile custom-kernel candidates.
 
 ## Final comparison
 
