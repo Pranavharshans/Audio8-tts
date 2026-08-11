@@ -55,20 +55,84 @@ AUDIO8_TTS_GREEDY_FASTPATH=0|1
 
 When enabled, sampling is replaced by a direct argmax and all top-k, top-p, and
 random sampling work is removed from the captured graph. This is a server-wide
-mode and must only be enabled when every request is intended to use greedy
-decoding. It overrides per-request sampling settings.
+mode for greedy-only deployments. Requests with a nonzero temperature are
+rejected during preprocessing instead of silently changing their sampling
+semantics; restart without the fast path to serve sampled requests.
 
 The CV3 quality evaluations in this report used
 `AUDIO8_TTS_GREEDY_FASTPATH=0`.
 
-### Portable Blackwell attention path
+### Reference encoder warm-up
+
+The lazily loaded reference codec now runs one zero-frame encoder warm-up
+before serving its first voice-cloning request. A fresh-process quality test
+showed that the original first reference encode could produce a different
+conditioning result from subsequent calls; the warm-up makes the first real
+request match the stable path without changing steady-state inference.
+
+### Optional codec weight baking
+
+```text
+AUDIO8_TTS_BAKE_CODEC_WEIGHT_NORM=0|1
+```
+
+Enabled by default, inference-invariant legacy and parametrized weight
+normalization is materialized once after loading each codec instance. This
+removes repeated weight-normalization kernels from every streaming decode;
+set the variable to `0` only for exact A/B validation.
+
+### Streaming final-decode elimination
+
+```text
+AUDIO8_TTS_SKIP_STREAMING_FINAL_DECODE=0|1
+```
+
+Streaming requests already decode and emit every audio sample incrementally.
+Enabled by default, the terminal pipeline payload is built from those emitted
+chunks instead of decoding the complete codec sequence a second time.
+Non-streaming requests retain the full single-pass decode path; set the
+variable to `0` only for exact A/B validation.
+
+The decoded CPU tensor is also exposed to NumPy without an additional
+full-window copy. NumPy retains the tensor storage through its base object, and
+the existing payload serialization owns the emitted bytes before that storage
+is released.
+
+### Cached semantic/EOS handoff
+
+Each generated semantic token is now transferred from GPU to CPU once and
+cached on the step output. The request updater, finish check, and streaming
+adapter share that value instead of independently calling `.item()`. EOS is
+filtered before vocoder enqueue, and the vocoder retains a view of each
+codebook frame instead of cloning it. These changes remove synchronization and
+copy overhead without changing generated codes or codec math.
+
+The reusable CUDA Graph output is copied once per generated frame into owned
+storage. Request history and the stream adapter share that retained tensor,
+and the next-step codebook state uses a lifetime-safe view of it, replacing two
+additional device-to-device copies.
+
+### Hybrid Triton Snake kernel
+
+```text
+AUDIO8_TTS_SNAKE_KERNEL=auto|torchscript|triton
+AUDIO8_TTS_TRITON_SNAKE_MIN_ELEMENTS=524288
+```
+
+The default `auto` path uses a custom Triton kernel only for large BF16,
+contiguous CUDA decoder activations and retains the original TorchScript-fused
+kernel for smaller shapes. It falls back to TorchScript when Triton is
+unavailable and does not modify the reference encoder. Set `torchscript` for an
+exact-output A/B run, or `triton` to require the custom CUDA path at startup.
+
+### Portable non-Hopper attention path
 
 `AUDIO8_TTS_ATTENTION_BACKEND` controls both the SGLang slow-AR backend and the
 fast-head cache implementation:
 
 ```text
 AUDIO8_TTS_ATTENTION_BACKEND=fa3         # default for Hopper/H20
-AUDIO8_TTS_ATTENTION_BACKEND=flashinfer  # consumer Blackwell
+AUDIO8_TTS_ATTENTION_BACKEND=flashinfer  # Ampere, Ada, consumer Blackwell
 ```
 
 The default path retains `flash_attn_with_kvcache`. When a non-`fa3` backend is
@@ -78,11 +142,10 @@ for CUDA Graph capture. This avoids the Hopper-only FA3 custom op on `sm_120`
 without changing the Hopper path.
 
 When the variable is unset, the backend is resolved by
-`models/audio8_tts/attention_backend.py`. Devices whose compute capability has
-no FA3 kernel image — currently `(12, 0)`, consumer Blackwell — default to
-`flashinfer`; every other device keeps `fa3`. The probe is cached and runs once
-per process, and an explicit `AUDIO8_TTS_ATTENTION_BACKEND` always takes
-precedence, so Hopper deployments are unaffected.
+`models/audio8_tts/attention_backend.py`. Validated Hopper capability `(9, 0)`
+uses `fa3`; Ampere, Ada, consumer Blackwell, and unknown future capabilities
+default to `flashinfer`. The probe is cached and runs once per process, and an
+explicit `AUDIO8_TTS_ATTENTION_BACKEND` always takes precedence.
 
 For consumer Blackwell deployment, `sgl_kernel` also requires the system
 `libnuma` library. The CUDA toolkit `bin` directory must be on `PATH`, and

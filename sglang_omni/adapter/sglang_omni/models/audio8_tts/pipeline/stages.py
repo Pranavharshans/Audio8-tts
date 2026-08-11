@@ -36,6 +36,24 @@ def _load_config(model_path: str) -> SimpleNamespace:
         return SimpleNamespace(**json.load(handle))
 
 
+def _bake_codec_weight_norm(codec: Any) -> int:
+    from torch.nn.utils import parametrize, remove_weight_norm
+
+    baked = 0
+    for module in codec.modules():
+        parametrizations = getattr(module, "parametrizations", None)
+        if parametrizations is not None and "weight" in parametrizations:
+            parametrize.remove_parametrizations(module, "weight", leave_parametrized=True)
+            baked += 1
+        try:
+            remove_weight_norm(module)
+        except ValueError:
+            pass
+        else:
+            baked += 1
+    return baked
+
+
 def _load_codec(model_path: str, device: str) -> Any:
     model_dir = Path(model_path)
     module_path = model_dir / "modeling_arktts_codec.py"
@@ -67,7 +85,11 @@ def _load_codec(model_path: str, device: str) -> Any:
     }
     codec.load_state_dict(state, strict=True, assign=True)
     dtype = torch.float32 if device == "cpu" else torch.bfloat16
-    return codec.eval().to(device=device, dtype=dtype)
+    codec = codec.eval().to(device=device, dtype=dtype)
+    if os.getenv("AUDIO8_TTS_BAKE_CODEC_WEIGHT_NORM", "1") == "1":
+        baked = _bake_codec_weight_norm(codec)
+        logger.info("Baked weight normalization into %d codec modules", baked)
+    return codec
 
 
 def _load_audio(audio_path: str, sample_rate: int) -> torch.Tensor:
@@ -103,6 +125,14 @@ def _encode_reference(codec: Any, audio_path: str, device: str) -> torch.Tensor:
     with torch.inference_mode():
         codes, code_lengths = codec.encode(audio, lengths)
     return codes[0, :, : int(code_lengths[0].item())].cpu()
+
+
+def _warmup_codec_encoder(codec: Any, device: str) -> None:
+    dtype = next(codec.parameters()).dtype
+    audio = torch.zeros(1, codec.frame_length, device=device, dtype=dtype)
+    lengths = torch.tensor([codec.frame_length], device=device, dtype=torch.long)
+    with torch.inference_mode():
+        codec.encode(audio, lengths)
 
 
 def _validate_codes(value: Any, num_codebooks: int, codebook_size: int) -> torch.Tensor:
@@ -141,11 +171,19 @@ def create_preprocessing_executor(
         if codec is None:
             logger.info("Loading Audio8 reference codec on %s", device)
             codec = _load_codec(model_path, device)
+            _warmup_codec_encoder(codec, device)
         return codec
 
     def preprocess(payload: StagePayload) -> StagePayload:
         inputs = payload.request.inputs or {}
         params = payload.request.params or {}
+        temperature = float(params.get("temperature", 0.8))
+        greedy_fastpath = os.getenv("AUDIO8_TTS_GREEDY_FASTPATH", "0") == "1"
+        if greedy_fastpath and temperature > 0:
+            raise ValueError(
+                "AUDIO8_TTS_GREEDY_FASTPATH=1 only supports temperature=0; "
+                "restart without the fast path to serve sampled requests"
+            )
         if isinstance(inputs, str):
             inputs = {"text": inputs}
         references: list[Reference] | None = None
@@ -173,10 +211,10 @@ def create_preprocessing_executor(
             num_codebooks=config.num_codebooks,
             codebook_size=config.codebook_size,
             max_new_tokens=int(params.get("max_new_tokens", 1024)),
-            temperature=float(params.get("temperature", 0.8)),
+            temperature=temperature,
             top_p=float(params.get("top_p", 0.95)),
             top_k=int(params.get("top_k", 50)),
-            do_sample=float(params.get("temperature", 0.8)) > 0,
+            do_sample=temperature > 0,
             sample_rate=config.codec_sample_rate,
         )
         return store_state(payload, state)
@@ -241,6 +279,32 @@ def create_vocoder_executor(
     device: str = "cuda:0",
 ) -> Audio8StreamingVocoderExecutor:
     codec = _load_codec(model_path, device)
+    snake_kernel = os.getenv("AUDIO8_TTS_SNAKE_KERNEL", "auto")
+    if snake_kernel not in {"auto", "torchscript", "triton"}:
+        raise ValueError(
+            "AUDIO8_TTS_SNAKE_KERNEL must be 'auto', 'torchscript', or 'triton', "
+            f"got {snake_kernel!r}"
+        )
+    if snake_kernel != "torchscript" and device.startswith("cuda"):
+        try:
+            from sglang_omni.models.audio8_tts.codec_kernels import install_triton_snake
+        except ImportError:
+            if snake_kernel == "triton":
+                raise
+            logger.warning("Triton unavailable; retaining TorchScript Snake kernels")
+        else:
+            min_elements = int(
+                os.getenv("AUDIO8_TTS_TRITON_SNAKE_MIN_ELEMENTS", str(1 << 19))
+            )
+            installed = install_triton_snake(codec.decoder, min_elements=min_elements)
+            logger.info(
+                "Installed hybrid Triton Snake kernel in %d decoder modules "
+                "(min_elements=%d)",
+                installed,
+                min_elements,
+            )
+    elif snake_kernel == "triton":
+        raise ValueError("AUDIO8_TTS_SNAKE_KERNEL=triton requires a CUDA device")
     config = _load_config(model_path)
     warmup_codes = torch.zeros(
         1,
@@ -260,4 +324,7 @@ def create_vocoder_executor(
         context_frames=int(os.getenv("AUDIO8_TTS_STREAM_CONTEXT_FRAMES", "128")),
         guard_frames=int(os.getenv("AUDIO8_TTS_STREAM_GUARD_FRAMES", "1")),
         hop_length=config.codec_frame_size,
+        skip_streaming_final_decode=(
+            os.getenv("AUDIO8_TTS_SKIP_STREAMING_FINAL_DECODE", "1") == "1"
+        ),
     )

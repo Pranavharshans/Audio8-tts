@@ -24,6 +24,7 @@ class Audio8StreamingVocoderExecutor(Executor):
         context_frames: int = 128,
         guard_frames: int = 1,
         hop_length: int = 2048,
+        skip_streaming_final_decode: bool = False,
     ) -> None:
         self._codec = codec
         self._device = torch.device(device)
@@ -34,6 +35,7 @@ class Audio8StreamingVocoderExecutor(Executor):
         self._guard_samples = max(int(guard_frames), 0) * int(hop_length)
         self._hop_length = int(hop_length)
         self._sample_rate = int(codec.sample_rate)
+        self._skip_streaming_final_decode = bool(skip_streaming_final_decode)
         self._stream_queue: Any | None = None
         self._done: asyncio.Queue[str] = asyncio.Queue()
         self._tasks: dict[str, asyncio.Task[StagePayload]] = {}
@@ -92,6 +94,7 @@ class Audio8StreamingVocoderExecutor(Executor):
         output_queue = self._output_queues[request_id]
         state = load_state(payload)
         frames: list[torch.Tensor] = []
+        emitted_chunks: list[np.ndarray] = []
         emitted_samples = 0
 
         try:
@@ -102,10 +105,7 @@ class Audio8StreamingVocoderExecutor(Executor):
                 codes = torch.as_tensor(item.data, device=self._device, dtype=torch.long)
                 if codes.ndim == 1:
                     codes = codes[:, None]
-                semantic = int(codes[0, -1].item())
-                if semantic == self._eos_token_id:
-                    continue
-                frame = codes[1 : self._num_codebooks + 1, -1].clone()
+                frame = codes[1 : self._num_codebooks + 1, -1]
                 if frame.numel() != self._num_codebooks:
                     raise ValueError(
                         f"Audio8 stream frame has {frame.numel()} codebooks, "
@@ -119,6 +119,7 @@ class Audio8StreamingVocoderExecutor(Executor):
                 begin = max(0, emitted_samples - absolute_start)
                 if stable_end > begin:
                     chunk = np.ascontiguousarray(audio[begin:stable_end])
+                    emitted_chunks.append(chunk)
                     emitted_samples = absolute_start + stable_end
                     await output_queue.put(self._audio_payload(chunk))
 
@@ -129,11 +130,20 @@ class Audio8StreamingVocoderExecutor(Executor):
             begin = max(0, emitted_samples - absolute_start)
             if begin < tail.size:
                 chunk = np.ascontiguousarray(tail[begin:])
+                emitted_chunks.append(chunk)
                 emitted_samples = absolute_start + tail.size
                 await output_queue.put(self._audio_payload(chunk))
             await output_queue.put(None)
 
-            full_audio = await self._decode_frames(frames, 0, len(frames))
+            is_streaming_request = bool(payload.request.params.get("stream", False))
+            if self._skip_streaming_final_decode and is_streaming_request:
+                full_audio = (
+                    np.concatenate(emitted_chunks)
+                    if emitted_chunks
+                    else np.empty(0, dtype=np.float32)
+                )
+            else:
+                full_audio = await self._decode_frames(frames, 0, len(frames))
             payload.data = self._audio_payload(full_audio)
             prompt_tokens = len(state.input_ids) if state.input_ids is not None else 0
             payload.data["usage"] = {
@@ -178,7 +188,9 @@ class Audio8StreamingVocoderExecutor(Executor):
         codes = torch.stack(frames[start:end], dim=1).unsqueeze(0)
         with torch.inference_mode():
             audio = self._codec.decode(codes)[0, 0]
-        return audio.detach().float().cpu().numpy().copy()
+        # The ndarray keeps the CPU tensor storage alive through its base
+        # object, so a second full-window CPU copy is unnecessary.
+        return audio.detach().float().cpu().numpy()
 
     def _audio_payload(self, audio: np.ndarray) -> dict[str, Any]:
         value = audio.astype(np.float32, copy=False)
