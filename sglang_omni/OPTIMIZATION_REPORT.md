@@ -93,6 +93,19 @@ chunks instead of decoding the complete codec sequence a second time.
 Non-streaming requests retain the full single-pass decode path; set the
 variable to `0` only for exact A/B validation.
 
+### Hybrid Triton Snake kernel
+
+```text
+AUDIO8_TTS_SNAKE_KERNEL=auto|torchscript|triton
+AUDIO8_TTS_TRITON_SNAKE_MIN_ELEMENTS=1048576
+```
+
+The default `auto` path uses a custom Triton kernel only for large BF16,
+contiguous CUDA decoder activations and retains the original TorchScript-fused
+kernel for smaller shapes. It falls back to TorchScript when Triton is
+unavailable and does not modify the reference encoder. Set `torchscript` for an
+exact-output A/B run, or `triton` to require the custom CUDA path at startup.
+
 ### Portable non-Hopper attention path
 
 `AUDIO8_TTS_ATTENTION_BACKEND` controls both the SGLang slow-AR backend and the

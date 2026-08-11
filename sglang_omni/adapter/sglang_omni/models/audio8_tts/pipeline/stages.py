@@ -279,6 +279,32 @@ def create_vocoder_executor(
     device: str = "cuda:0",
 ) -> Audio8StreamingVocoderExecutor:
     codec = _load_codec(model_path, device)
+    snake_kernel = os.getenv("AUDIO8_TTS_SNAKE_KERNEL", "auto")
+    if snake_kernel not in {"auto", "torchscript", "triton"}:
+        raise ValueError(
+            "AUDIO8_TTS_SNAKE_KERNEL must be 'auto', 'torchscript', or 'triton', "
+            f"got {snake_kernel!r}"
+        )
+    if snake_kernel != "torchscript" and device.startswith("cuda"):
+        try:
+            from sglang_omni.models.audio8_tts.codec_kernels import install_triton_snake
+        except ImportError:
+            if snake_kernel == "triton":
+                raise
+            logger.warning("Triton unavailable; retaining TorchScript Snake kernels")
+        else:
+            min_elements = int(
+                os.getenv("AUDIO8_TTS_TRITON_SNAKE_MIN_ELEMENTS", str(1 << 20))
+            )
+            installed = install_triton_snake(codec.decoder, min_elements=min_elements)
+            logger.info(
+                "Installed hybrid Triton Snake kernel in %d decoder modules "
+                "(min_elements=%d)",
+                installed,
+                min_elements,
+            )
+    elif snake_kernel == "triton":
+        raise ValueError("AUDIO8_TTS_SNAKE_KERNEL=triton requires a CUDA device")
     config = _load_config(model_path)
     warmup_codes = torch.zeros(
         1,

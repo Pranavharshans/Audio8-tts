@@ -253,6 +253,11 @@ pipeline payload instead of running a redundant full codec decode. Non-streaming
 requests retain the full single-pass decode path. Set
 `AUDIO8_TTS_SKIP_STREAMING_FINAL_DECODE=0` only for A/B debugging.
 
+Large BF16 codec activations use a hybrid Triton Snake kernel by default when
+Triton and CUDA are available; smaller shapes retain the existing TorchScript
+fusion. Set `AUDIO8_TTS_SNAKE_KERNEL=torchscript` for exact-output A/B debugging,
+or `triton` to require the custom kernel at startup.
+
 ### Troubleshooting
 
 - Install the distribution package that provides `libnuma` if `sgl_kernel`
