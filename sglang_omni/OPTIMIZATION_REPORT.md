@@ -98,6 +98,15 @@ full-window copy. NumPy retains the tensor storage through its base object, and
 the existing payload serialization owns the emitted bytes before that storage
 is released.
 
+### Cached semantic/EOS handoff
+
+Each generated semantic token is now transferred from GPU to CPU once and
+cached on the step output. The request updater, finish check, and streaming
+adapter share that value instead of independently calling `.item()`. EOS is
+filtered before vocoder enqueue, and the vocoder retains a view of each
+codebook frame instead of cloning it. These changes remove synchronization and
+copy overhead without changing generated codes or codec math.
+
 ### Hybrid Triton Snake kernel
 
 ```text

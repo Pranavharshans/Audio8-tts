@@ -26,6 +26,12 @@ if TYPE_CHECKING:
 @dataclass
 class Audio8StepOutput:
     codes: torch.Tensor
+    semantic: int | None = None
+
+    def get_semantic(self) -> int:
+        if self.semantic is None:
+            self.semantic = int(self.codes[0, -1].item())
+        return self.semantic
 
 
 @dataclass
@@ -58,7 +64,7 @@ class Audio8IterationController:
             req.is_chunked -= 1
             return
         codes = output.data.codes.clone()
-        semantic = int(codes[0, -1].item())
+        semantic = output.data.get_semantic()
         if semantic != self.eos_token_id:
             # HF generation does not send the EOS step to the waveform codec.
             if data.output_codes:
@@ -73,7 +79,7 @@ class Audio8IterationController:
         data: Audio8SGLangRequestData = request.data
         if data.req.is_chunked > 0:
             return False
-        semantic = int(output.data.codes[0, -1].item())
+        semantic = output.data.get_semantic()
         if semantic == self.eos_token_id:
             return True
         return len(data.output_codes) >= (data.max_new_tokens or self.max_new_tokens)

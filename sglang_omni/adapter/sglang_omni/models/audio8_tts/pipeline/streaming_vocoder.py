@@ -105,10 +105,7 @@ class Audio8StreamingVocoderExecutor(Executor):
                 codes = torch.as_tensor(item.data, device=self._device, dtype=torch.long)
                 if codes.ndim == 1:
                     codes = codes[:, None]
-                semantic = int(codes[0, -1].item())
-                if semantic == self._eos_token_id:
-                    continue
-                frame = codes[1 : self._num_codebooks + 1, -1].clone()
+                frame = codes[1 : self._num_codebooks + 1, -1]
                 if frame.numel() != self._num_codebooks:
                     raise ValueError(
                         f"Audio8 stream frame has {frame.numel()} codebooks, "

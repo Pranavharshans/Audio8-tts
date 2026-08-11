@@ -83,6 +83,7 @@ Workload: `assets/training/Maya.wav`, matching transcript from the repository gu
 | E021 | `f102397` + 30-run threshold sweep | Compare 524,288, 1,048,576, and 2,097,152-element hybrid Snake cutoffs | pass: macro WER unchanged; speaker delta -0.00365; stream/full cosine >0.99994 | **968.16 ms** | **973.73 ms** | **89.40 ms** | **0.401** p50 / 0.403 p95 | accept 524,288 default: best mean and p95; p50 tied within 0.23 ms |
 | E022 | `3cc7872` + cuDNN benchmark mode | Autotune convolution algorithms for dynamic codec shapes | fail: repeated prompt produced varying PCM hashes | **2,513.69 ms** | **4,017.47 ms** | **89.01 ms** p50 / 626.91 p95 | **1.041** p50 / 1.664 p95 | reject and remove: repeated searches cause severe latency and nondeterminism |
 | E023 | `789216a` + zero-extra-copy CPU handoff | Let NumPy retain decoded CPU tensor storage instead of copying each full context window | exact byte match for all 12 E021 WAV artifacts | **967.47 ms** | **973.34 ms** | **88.35 ms** | **0.401** p50 / 0.403 p95 | accept: -0.69 ms p50 and -0.82 ms mean versus E021 |
+| E024 | `919dac2` + cached semantic/EOS handoff | Cache one GPU scalar EOS check per step, filter EOS before the vocoder, and retain a frame view | exact byte match for all 12 E023 WAV artifacts | **963.09 ms** | **970.07 ms** | **89.96 ms** | **0.399** p50 / 0.402 p95 | accept: -4.38 ms p50 and fewer per-step synchronizations |
 
 ## Detailed experiments
 
@@ -242,6 +243,13 @@ Workload: `assets/training/Maya.wav`, matching transcript from the repository gu
 - In a 30-request comparison against E021, mean/p50/p95 improved from 968.38/968.16/973.73 ms to 967.56/967.47/973.34 ms. P50/p95 RTF remained 0.401/0.403, and TTFA p50 measured 88.35 ms.
 - The primary PCM hash was unchanged, and every streamed/full WAV in the six-prompt suite was byte-for-byte identical to E021. E023 is accepted.
 
+### E024 — cache the semantic/EOS handoff
+
+- The same generated semantic token was previously transferred from GPU to CPU with `.item()` in the request update, finish check, and vocoder handoff. `Audio8StepOutput` now performs that synchronization once and caches the integer for all three consumers.
+- EOS is filtered before enqueueing vocoder work, and the vocoder retains a view of the codebook frame instead of issuing a tiny device-to-device clone. Neither change modifies model or codec math.
+- Across 30 measured requests, mean/p50/p95 improved from E023's 967.56/967.47/973.34 ms to 963.23/963.09/970.07 ms. P50/p95 RTF improved from 0.401/0.403 to 0.399/0.402. TTFA p50/p95 measured 89.96/112.58 ms; the 1.61 ms p50 movement versus E023 is treated as run variance because this optimization primarily removes work after generation begins.
+- The primary PCM SHA-256 remained `f0e5fe64421f5d3eb097d75bac3c423e26a3cb411452a6828405b19d6f6b0b06`, and every streamed/full WAV in the six-prompt suite was byte-for-byte identical to E023. E024 is accepted.
+
 ## Final comparison
 
-E023 is the recommended performance profile at 0.401 p50 / 0.403 p95 RTF with byte-identical output versus E021, a passing objective quality gate, and an automatic TorchScript fallback. E018 remains the pre-custom-kernel exact-output profile at 0.404 p50 / 0.406 p95 RTF and about 100 ms measured TTFA. E010 reaches similarly low TTFA but meets the RTF target only at p50. E008 confirms that broad TorchInductor compilation is not quality-safe for this path, while E017 shows codec-only dynamic compilation is not currently viable. E002 remains the leading exact-artifact eager optimization, although its speedup is too small to meet the RTF target alone.
+E024 is the recommended performance profile at 0.399 p50 / 0.402 p95 RTF with byte-identical output versus E023, a passing objective quality gate, and an automatic TorchScript fallback. E018 remains the pre-custom-kernel exact-output profile at 0.404 p50 / 0.406 p95 RTF and about 100 ms measured TTFA. E010 reaches similarly low TTFA but meets the RTF target only at p50. E008 confirms that broad TorchInductor compilation is not quality-safe for this path, while E017 shows codec-only dynamic compilation is not currently viable. E002 remains the leading exact-artifact eager optimization, although its speedup is too small to meet the RTF target alone.
