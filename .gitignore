@@ -10,6 +10,7 @@ runs/
 checkpoints/
 prepared_data/
 *.log
+artifacts/
 
 /onnx_runtime/model/
 /onnx_runtime/voices/
