@@ -74,6 +74,7 @@ Workload: `assets/training/Maya.wav`, matching transcript from the repository gu
 | E012 | `c2a2940` + safety validation | Reject sampled requests on a greedy-fast-path server | greedy PCM hash unchanged; sampled request rejected | 1,043.08 ms single check | n/a | 129.82 ms single check | 0.432 single check | accept: prevents silent sampling-quality changes |
 | E013 | `f7fd5b9` + backend resolver fix | Auto-select portable attention on non-Hopper GPUs; no backend override | exact PCM hash match to E011 | **1,030.07 ms** | **1,035.51 ms** | **113.90 ms** | **0.427** p50 / 0.429 p95 | accept: RTX 4060 Ti deployment works without manual backend config |
 | E014 | `fec7a20` + quality harness and reference-encoder warm-up | Six-prompt eager/stream/full quality suite; 3 no-reference + 3 reference-voice prompts | pass: stream/full cosine >0.999; macro WER equal; mean speaker cosine delta -0.0028 | n/a | n/a | n/a | n/a | accept quality gate; fixes first-reference cold-start divergence |
+| E015 | `152569e` + Nsight Systems | Profile accepted 3-frame serving path to select kernel-fusion targets | observational; no output change | n/a | n/a | n/a | n/a | weight norm 7.3% GPU time; layout transforms 11.4%; target kernel elimination first |
 
 ## Detailed experiments
 
@@ -178,6 +179,12 @@ Workload: `assets/training/Maya.wav`, matching transcript from the repository gu
 - The first fresh-server run exposed a cold-start defect: the first reference-conditioned stream had cosine -0.083 versus its full decode, while an immediate repeat reached 0.999945. Warming the reference codec encoder with one zero frame after loading removed the divergence; a fresh-server rerun passed all six waveform checks with cosine above 0.999 and 39.49-44.89 dB SNR.
 - Whisper Small English produced identical eager and optimized macro WER (0.0833). Five prompts had zero WER; both paths received the same word-level penalty on `Audio8`, while the optimized path had lower character error for that prompt.
 - WavLM speaker verification across the three reference prompts measured mean reference cosine 0.9388 for optimized streaming versus 0.9415 for eager, a -0.0028 delta inside the predefined 0.01 tolerance. The six-prompt quality gate passes; this remains a bounded evaluation rather than a claim of universal perceptual equivalence.
+
+### E015 — accepted-path kernel profile
+
+- Nsight Systems captured the accepted RTX 4060 Ti configuration under live HTTP streaming requests. The timed capture ended before the client completed every planned iteration, so it is used for kernel attribution rather than latency reporting.
+- Runtime weight-normalization kernels consumed 7.3% of GPU kernel time across 547 launches. NCHW-to-NHWC and NHWC-to-NCHW transforms consumed 11.4% combined, while codec convolutions occupied most of the remaining top kernels.
+- CUDA API time was dominated by `cudaStreamSynchronize` (58.9%), followed by `cudaMemcpyAsync` (20.7%) and kernel launch calls. The first custom-kernel phase therefore prioritizes eliminating inference-invariant weight-normalization work, followed by codec layout/elementwise fusion; the already-fused RMSNorm kernels account for only about 0.1% and are not worth replacing.
 
 ## Final comparison
 
