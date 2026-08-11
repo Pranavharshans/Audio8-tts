@@ -93,6 +93,11 @@ chunks instead of decoding the complete codec sequence a second time.
 Non-streaming requests retain the full single-pass decode path; set the
 variable to `0` only for exact A/B validation.
 
+The decoded CPU tensor is also exposed to NumPy without an additional
+full-window copy. NumPy retains the tensor storage through its base object, and
+the existing payload serialization owns the emitted bytes before that storage
+is released.
+
 ### Hybrid Triton Snake kernel
 
 ```text

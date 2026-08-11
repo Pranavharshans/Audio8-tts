@@ -82,6 +82,7 @@ Workload: `assets/training/Maya.wav`, matching transcript from the repository gu
 | E020 | `6afdf48` + hybrid Triton Snake | Custom single-pass Snake kernel for large BF16 decoder activations; TorchScript fusion retained below 1,048,576 elements | pass: macro WER unchanged; speaker delta -0.00349; direct E018 cosine >=0.9999937 | **968.95 ms** | **976.06 ms** | **112.13 ms** | **0.401** p50 / 0.404 p95 | accept with automatic fallback: -0.7% p50 versus E018 |
 | E021 | `f102397` + 30-run threshold sweep | Compare 524,288, 1,048,576, and 2,097,152-element hybrid Snake cutoffs | pass: macro WER unchanged; speaker delta -0.00365; stream/full cosine >0.99994 | **968.16 ms** | **973.73 ms** | **89.40 ms** | **0.401** p50 / 0.403 p95 | accept 524,288 default: best mean and p95; p50 tied within 0.23 ms |
 | E022 | `3cc7872` + cuDNN benchmark mode | Autotune convolution algorithms for dynamic codec shapes | fail: repeated prompt produced varying PCM hashes | **2,513.69 ms** | **4,017.47 ms** | **89.01 ms** p50 / 626.91 p95 | **1.041** p50 / 1.664 p95 | reject and remove: repeated searches cause severe latency and nondeterminism |
+| E023 | `789216a` + zero-extra-copy CPU handoff | Let NumPy retain decoded CPU tensor storage instead of copying each full context window | exact byte match for all 12 E021 WAV artifacts | **967.47 ms** | **973.34 ms** | **88.35 ms** | **0.401** p50 / 0.403 p95 | accept: -0.69 ms p50 and -0.82 ms mean versus E021 |
 
 ## Detailed experiments
 
@@ -235,6 +236,12 @@ Workload: `assets/training/Maya.wav`, matching transcript from the repository gu
 - Across 30 measured requests, total p50/p95 regressed to 2,513.69/4,017.47 ms and RTF to 1.041/1.664. TTFA p50 remained 89.01 ms, but p95 rose to 626.91 ms. This misses both latency and RTF goals by a wide margin.
 - The same deterministic prompt produced different PCM hashes across requests, so the experiment also fails the correctness gate. The switch and implementation were removed; fixed cuDNN heuristics remain the supported path.
 
+### E023 — remove redundant CPU full-window copy
+
+- After each codec decode, `.cpu().numpy().copy()` duplicated the complete context window even though only the newly stable suffix is serialized. NumPy already retains the CPU tensor's storage through its base object, so the final `.copy()` was removed without changing ownership or payload lifetime.
+- In a 30-request comparison against E021, mean/p50/p95 improved from 968.38/968.16/973.73 ms to 967.56/967.47/973.34 ms. P50/p95 RTF remained 0.401/0.403, and TTFA p50 measured 88.35 ms.
+- The primary PCM hash was unchanged, and every streamed/full WAV in the six-prompt suite was byte-for-byte identical to E021. E023 is accepted.
+
 ## Final comparison
 
-E021 is the recommended performance profile at 0.401 p50 / 0.403 p95 RTF with a passing objective quality gate and an automatic TorchScript fallback. E018 remains the exact-output profile at 0.404 p50 / 0.406 p95 RTF and about 100 ms measured TTFA. E010 reaches similarly low TTFA but meets the RTF target only at p50. E008 confirms that broad TorchInductor compilation is not quality-safe for this path, while E017 shows codec-only dynamic compilation is not currently viable. E002 remains the leading exact-artifact eager optimization, although its speedup is too small to meet the RTF target alone.
+E023 is the recommended performance profile at 0.401 p50 / 0.403 p95 RTF with byte-identical output versus E021, a passing objective quality gate, and an automatic TorchScript fallback. E018 remains the pre-custom-kernel exact-output profile at 0.404 p50 / 0.406 p95 RTF and about 100 ms measured TTFA. E010 reaches similarly low TTFA but meets the RTF target only at p50. E008 confirms that broad TorchInductor compilation is not quality-safe for this path, while E017 shows codec-only dynamic compilation is not currently viable. E002 remains the leading exact-artifact eager optimization, although its speedup is too small to meet the RTF target alone.

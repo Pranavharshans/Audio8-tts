@@ -191,7 +191,9 @@ class Audio8StreamingVocoderExecutor(Executor):
         codes = torch.stack(frames[start:end], dim=1).unsqueeze(0)
         with torch.inference_mode():
             audio = self._codec.decode(codes)[0, 0]
-        return audio.detach().float().cpu().numpy().copy()
+        # The ndarray keeps the CPU tensor storage alive through its base
+        # object, so a second full-window CPU copy is unnecessary.
+        return audio.detach().float().cpu().numpy()
 
     def _audio_payload(self, audio: np.ndarray) -> dict[str, Any]:
         value = audio.astype(np.float32, copy=False)
