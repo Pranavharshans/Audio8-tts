@@ -298,4 +298,7 @@ def create_vocoder_executor(
         context_frames=int(os.getenv("AUDIO8_TTS_STREAM_CONTEXT_FRAMES", "128")),
         guard_frames=int(os.getenv("AUDIO8_TTS_STREAM_GUARD_FRAMES", "1")),
         hop_length=config.codec_frame_size,
+        skip_streaming_final_decode=(
+            os.getenv("AUDIO8_TTS_SKIP_STREAMING_FINAL_DECODE", "1") == "1"
+        ),
     )

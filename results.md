@@ -77,6 +77,7 @@ Workload: `assets/training/Maya.wav`, matching transcript from the repository gu
 | E015 | `152569e` + Nsight Systems | Profile accepted 3-frame serving path to select kernel-fusion targets | observational; no output change | n/a | n/a | n/a | n/a | weight norm 7.3% GPU time; layout transforms 11.4%; target kernel elimination first |
 | E016 | `8d5b252` + codec weight baking | Materialize 80 inference-invariant weight-normalization hooks per codec after load | exact byte match for all 12 E014 WAV artifacts | **1,012.17 ms** | **1,017.39 ms** | **112.62 ms** | **0.419** p50 / 0.421 p95 | accept and enable by default: -1.7% total latency |
 | E017 | `6d2f54b` + codec-only compile | Compile dynamic-shape codec decode with TorchInductor `reduce-overhead` | no output produced; startup compiler failure | n/a | n/a | n/a | n/a | reject: backend storage-lifetime error in quantizer attention graph |
+| E018 | `d7a9e91` + streaming final-decode elimination | Reuse incrementally emitted PCM instead of decoding the complete codec sequence again at stream completion | exact byte match for all 12 E016 WAV artifacts | **975.49 ms** | **981.43 ms** | **99.57 ms** | **0.404** p50 / 0.406 p95 | accept and enable by default: -3.6% total latency versus E016 |
 
 ## Detailed experiments
 
@@ -200,6 +201,12 @@ Workload: `assets/training/Maya.wav`, matching transcript from the repository gu
 - The first warm-up failed during startup with a TorchInductor backend storage-lifetime error while compiling the quantizer post-module attention projection. The server never accepted a request, so there was no quality exposure.
 - The experimental switch was removed rather than shipping a dormant, unvalidated path. E017 is rejected; subsequent kernel work uses narrower, directly testable targets.
 
+### E018 — eliminate redundant final streaming decode
+
+- Streaming already decodes and emits the complete waveform chunk by chunk. The terminal pipeline payload now concatenates those emitted PCM chunks instead of invoking the codec once more over the full frame sequence. Non-streaming requests retain their original full single-pass decode.
+- Total p50 improved from E016's 1,012.17 ms to 975.49 ms (-3.6%); p50 RTF improved from 0.419 to 0.404, with p95 RTF at 0.406. TTFA measured 99.57 ms, but this optimization runs only at stream completion, so the apparent TTFA change is treated as benchmark variance rather than a causal gain.
+- The primary PCM hash remained `dd6aefc83ab74a1f378f74c5eae60ac2ec7a3cb468ce4f1afb0a6a97525da71e`. All 12 streamed and full-decode WAV artifacts in the six-prompt quality suite were byte-for-byte identical to E016. E018 is accepted and enabled by default.
+
 ## Final comparison
 
-E016 is the recommended low-TTFA profile at 113 ms with stable RTF headroom, exact quality-suite artifacts versus E014, and a passing objective quality gate versus eager. E010 reaches 102 ms TTFA but meets the RTF target only at p50. E008 confirms that TorchInductor is not quality-safe for this path. E002 remains the leading exact-artifact eager optimization, although its speedup is too small to meet the RTF target alone.
+E018 is the recommended low-TTFA profile at about 100 ms with stable RTF headroom, byte-identical quality-suite artifacts versus E016, and the passing E014 objective quality gate versus eager. Its 0.404 p50 / 0.406 p95 RTF is the best accepted three-frame streaming result. E010 reaches similarly low TTFA but meets the RTF target only at p50. E008 confirms that broad TorchInductor compilation is not quality-safe for this path, while E017 shows codec-only dynamic compilation is not currently viable. E002 remains the leading exact-artifact eager optimization, although its speedup is too small to meet the RTF target alone.

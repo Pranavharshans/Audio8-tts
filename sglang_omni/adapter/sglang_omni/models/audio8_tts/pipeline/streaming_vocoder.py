@@ -24,6 +24,7 @@ class Audio8StreamingVocoderExecutor(Executor):
         context_frames: int = 128,
         guard_frames: int = 1,
         hop_length: int = 2048,
+        skip_streaming_final_decode: bool = False,
     ) -> None:
         self._codec = codec
         self._device = torch.device(device)
@@ -34,6 +35,7 @@ class Audio8StreamingVocoderExecutor(Executor):
         self._guard_samples = max(int(guard_frames), 0) * int(hop_length)
         self._hop_length = int(hop_length)
         self._sample_rate = int(codec.sample_rate)
+        self._skip_streaming_final_decode = bool(skip_streaming_final_decode)
         self._stream_queue: Any | None = None
         self._done: asyncio.Queue[str] = asyncio.Queue()
         self._tasks: dict[str, asyncio.Task[StagePayload]] = {}
@@ -92,6 +94,7 @@ class Audio8StreamingVocoderExecutor(Executor):
         output_queue = self._output_queues[request_id]
         state = load_state(payload)
         frames: list[torch.Tensor] = []
+        emitted_chunks: list[np.ndarray] = []
         emitted_samples = 0
 
         try:
@@ -119,6 +122,7 @@ class Audio8StreamingVocoderExecutor(Executor):
                 begin = max(0, emitted_samples - absolute_start)
                 if stable_end > begin:
                     chunk = np.ascontiguousarray(audio[begin:stable_end])
+                    emitted_chunks.append(chunk)
                     emitted_samples = absolute_start + stable_end
                     await output_queue.put(self._audio_payload(chunk))
 
@@ -129,11 +133,20 @@ class Audio8StreamingVocoderExecutor(Executor):
             begin = max(0, emitted_samples - absolute_start)
             if begin < tail.size:
                 chunk = np.ascontiguousarray(tail[begin:])
+                emitted_chunks.append(chunk)
                 emitted_samples = absolute_start + tail.size
                 await output_queue.put(self._audio_payload(chunk))
             await output_queue.put(None)
 
-            full_audio = await self._decode_frames(frames, 0, len(frames))
+            is_streaming_request = bool(payload.request.params.get("stream", False))
+            if self._skip_streaming_final_decode and is_streaming_request:
+                full_audio = (
+                    np.concatenate(emitted_chunks)
+                    if emitted_chunks
+                    else np.empty(0, dtype=np.float32)
+                )
+            else:
+                full_audio = await self._decode_frames(frames, 0, len(frames))
             payload.data = self._audio_payload(full_audio)
             prompt_tokens = len(state.input_ids) if state.input_ids is not None else 0
             payload.data["usage"] = {

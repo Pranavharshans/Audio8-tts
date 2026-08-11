@@ -81,6 +81,18 @@ normalization is materialized once after loading each codec instance. This
 removes repeated weight-normalization kernels from every streaming decode;
 set the variable to `0` only for exact A/B validation.
 
+### Streaming final-decode elimination
+
+```text
+AUDIO8_TTS_SKIP_STREAMING_FINAL_DECODE=0|1
+```
+
+Streaming requests already decode and emit every audio sample incrementally.
+Enabled by default, the terminal pipeline payload is built from those emitted
+chunks instead of decoding the complete codec sequence a second time.
+Non-streaming requests retain the full single-pass decode path; set the
+variable to `0` only for exact A/B validation.
+
 ### Portable non-Hopper attention path
 
 `AUDIO8_TTS_ATTENTION_BACKEND` controls both the SGLang slow-AR backend and the

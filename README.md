@@ -248,6 +248,11 @@ Codec weight normalization is baked once at load time by default, removing
 inference-invariant kernels from every streaming chunk. Set
 `AUDIO8_TTS_BAKE_CODEC_WEIGHT_NORM=0` only for A/B debugging.
 
+Streaming requests also reuse their incrementally emitted PCM for the terminal
+pipeline payload instead of running a redundant full codec decode. Non-streaming
+requests retain the full single-pass decode path. Set
+`AUDIO8_TTS_SKIP_STREAMING_FINAL_DECODE=0` only for A/B debugging.
+
 ### Troubleshooting
 
 - Install the distribution package that provides `libnuma` if `sgl_kernel`
