@@ -81,6 +81,7 @@ Workload: `assets/training/Maya.wav`, matching transcript from the repository gu
 | E019 | `5adc7ba` + Nsight Systems | Re-profile the accepted E018 path after weight baking and final-decode elimination | observational; no output change | n/a | n/a | n/a | n/a | weight-normalization kernels gone; layout transforms 10.8%; fused Snake 9.8%; convolutions remain dominant |
 | E020 | `6afdf48` + hybrid Triton Snake | Custom single-pass Snake kernel for large BF16 decoder activations; TorchScript fusion retained below 1,048,576 elements | pass: macro WER unchanged; speaker delta -0.00349; direct E018 cosine >=0.9999937 | **968.95 ms** | **976.06 ms** | **112.13 ms** | **0.401** p50 / 0.404 p95 | accept with automatic fallback: -0.7% p50 versus E018 |
 | E021 | `f102397` + 30-run threshold sweep | Compare 524,288, 1,048,576, and 2,097,152-element hybrid Snake cutoffs | pass: macro WER unchanged; speaker delta -0.00365; stream/full cosine >0.99994 | **968.16 ms** | **973.73 ms** | **89.40 ms** | **0.401** p50 / 0.403 p95 | accept 524,288 default: best mean and p95; p50 tied within 0.23 ms |
+| E022 | `3cc7872` + cuDNN benchmark mode | Autotune convolution algorithms for dynamic codec shapes | fail: repeated prompt produced varying PCM hashes | **2,513.69 ms** | **4,017.47 ms** | **89.01 ms** p50 / 626.91 p95 | **1.041** p50 / 1.664 p95 | reject and remove: repeated searches cause severe latency and nondeterminism |
 
 ## Detailed experiments
 
@@ -227,6 +228,12 @@ Workload: `assets/training/Maya.wav`, matching transcript from the repository gu
 - Three cutoffs were compared, followed by 30-request runs for the two plausible boundaries. At 524,288 elements, mean/p50/p95 were 968.38/968.16/973.73 ms. At 1,048,576 elements, they were 969.10/967.93/976.14 ms. At 2,097,152 elements, they regressed to 973.83/970.97/983.37 ms.
 - The 524,288 cutoff improves mean latency by 0.72 ms and p95 by 2.41 ms versus 1,048,576, while its p50 is 0.23 ms slower and therefore effectively tied. Its p50/p95 RTF is 0.401/0.403; TTFA p50/p95 is 89.40/113.10 ms. The lower cutoff is selected for better tail behavior.
 - Because the selected cutoff applies the non-byte-exact sine kernel to additional shapes, the complete six-prompt gate was rerun. Stream/full cosine remained above 0.99994, macro WER stayed equal to eager at 0.0833, and mean reference-speaker cosine was 0.93789 versus eager's 0.94155 (delta -0.00365, inside tolerance). The default threshold is changed to 524,288 elements.
+
+### E022 — cuDNN convolution autotuning
+
+- `torch.backends.cudnn.benchmark` was enabled before codec load and warm-up to test per-shape convolution algorithm selection. Streaming context growth produces many changing convolution shapes, so three warm-up requests did not stabilize the search cost.
+- Across 30 measured requests, total p50/p95 regressed to 2,513.69/4,017.47 ms and RTF to 1.041/1.664. TTFA p50 remained 89.01 ms, but p95 rose to 626.91 ms. This misses both latency and RTF goals by a wide margin.
+- The same deterministic prompt produced different PCM hashes across requests, so the experiment also fails the correctness gate. The switch and implementation were removed; fixed cuDNN heuristics remain the supported path.
 
 ## Final comparison
 
