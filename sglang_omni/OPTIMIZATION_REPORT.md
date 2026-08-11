@@ -62,6 +62,14 @@ semantics; restart without the fast path to serve sampled requests.
 The CV3 quality evaluations in this report used
 `AUDIO8_TTS_GREEDY_FASTPATH=0`.
 
+### Reference encoder warm-up
+
+The lazily loaded reference codec now runs one zero-frame encoder warm-up
+before serving its first voice-cloning request. A fresh-process quality test
+showed that the original first reference encode could produce a different
+conditioning result from subsequent calls; the warm-up makes the first real
+request match the stable path without changing steady-state inference.
+
 ### Portable non-Hopper attention path
 
 `AUDIO8_TTS_ATTENTION_BACKEND` controls both the SGLang slow-AR backend and the

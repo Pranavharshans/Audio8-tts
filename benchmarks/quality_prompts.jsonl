@@ -1,0 +1,6 @@
+{"id":"no_ref_welcome","text":"Welcome to Audio8 TTS."}
+{"id":"no_ref_market","text":"The evening market was quiet after the rain."}
+{"id":"no_ref_weather","text":"Warm sunlight returned as the storm clouds moved east."}
+{"id":"ref_market","text":"The evening market was quiet after the rain.","reference_audio":"../assets/training/Maya.wav","reference_text":"i went to the store to buy some fresh fruits and snacks for the evening"}
+{"id":"ref_technology","text":"Reliable technology should feel simple, fast, and natural.","reference_audio":"../assets/training/Maya.wav","reference_text":"i went to the store to buy some fresh fruits and snacks for the evening"}
+{"id":"ref_pangram","text":"The quick brown fox jumps over the lazy dog.","reference_audio":"../assets/training/Maya.wav","reference_text":"i went to the store to buy some fresh fruits and snacks for the evening"}

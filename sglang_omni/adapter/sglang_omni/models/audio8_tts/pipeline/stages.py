@@ -105,6 +105,14 @@ def _encode_reference(codec: Any, audio_path: str, device: str) -> torch.Tensor:
     return codes[0, :, : int(code_lengths[0].item())].cpu()
 
 
+def _warmup_codec_encoder(codec: Any, device: str) -> None:
+    dtype = next(codec.parameters()).dtype
+    audio = torch.zeros(1, codec.frame_length, device=device, dtype=dtype)
+    lengths = torch.tensor([codec.frame_length], device=device, dtype=torch.long)
+    with torch.inference_mode():
+        codec.encode(audio, lengths)
+
+
 def _validate_codes(value: Any, num_codebooks: int, codebook_size: int) -> torch.Tensor:
     codes = torch.as_tensor(value, dtype=torch.long, device="cpu")
     if codes.ndim != 2 or codes.shape[0] != num_codebooks or codes.shape[1] == 0:
@@ -141,6 +149,7 @@ def create_preprocessing_executor(
         if codec is None:
             logger.info("Loading Audio8 reference codec on %s", device)
             codec = _load_codec(model_path, device)
+            _warmup_codec_encoder(codec, device)
         return codec
 
     def preprocess(payload: StagePayload) -> StagePayload:

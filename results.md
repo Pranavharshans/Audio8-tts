@@ -73,6 +73,7 @@ Workload: `assets/training/Maya.wav`, matching transcript from the repository gu
 | E011 | `aee19c2` + runtime config | Combine greedy-only fast path with 3-frame chunks | deterministic and same length; versus SGLang full decode: cosine 0.999980, SNR 44.06 dB | **1,029.56 ms** | **1,031.75 ms** | **113.95 ms** | **0.426** p50 / 0.427 p95 | recommended low-TTFA profile with robust RTF margin |
 | E012 | `c2a2940` + safety validation | Reject sampled requests on a greedy-fast-path server | greedy PCM hash unchanged; sampled request rejected | 1,043.08 ms single check | n/a | 129.82 ms single check | 0.432 single check | accept: prevents silent sampling-quality changes |
 | E013 | `f7fd5b9` + backend resolver fix | Auto-select portable attention on non-Hopper GPUs; no backend override | exact PCM hash match to E011 | **1,030.07 ms** | **1,035.51 ms** | **113.90 ms** | **0.427** p50 / 0.429 p95 | accept: RTX 4060 Ti deployment works without manual backend config |
+| E014 | `fec7a20` + quality harness and reference-encoder warm-up | Six-prompt eager/stream/full quality suite; 3 no-reference + 3 reference-voice prompts | pass: stream/full cosine >0.999; macro WER equal; mean speaker cosine delta -0.0028 | n/a | n/a | n/a | n/a | accept quality gate; fixes first-reference cold-start divergence |
 
 ## Detailed experiments
 
@@ -171,6 +172,13 @@ Workload: `assets/training/Maya.wav`, matching transcript from the repository gu
 - With `AUDIO8_TTS_ATTENTION_BACKEND` unset, the RTX 4060 Ti reported capability `(8, 9)`, selected `flashinfer`, and started successfully. Direct resolver assertions cover Hopper, Ampere, Ada, Blackwell, missing-CUDA, and explicit-override cases.
 - All six requests retained E011's exact 106,496-sample PCM hash. Total p50 was 1,030.07 ms, TTFA p50 was 113.90 ms, and RTF was 0.427 at p50 and 0.429 at p95, confirming no material performance regression.
 
+### E014 — multi-prompt objective quality gate
+
+- A reproducible six-prompt manifest and evaluator now compare streamed output with same-path full decode and the eager repository path. The suite contains three no-reference and three Maya-reference voice prompts.
+- The first fresh-server run exposed a cold-start defect: the first reference-conditioned stream had cosine -0.083 versus its full decode, while an immediate repeat reached 0.999945. Warming the reference codec encoder with one zero frame after loading removed the divergence; a fresh-server rerun passed all six waveform checks with cosine above 0.999 and 39.49-44.89 dB SNR.
+- Whisper Small English produced identical eager and optimized macro WER (0.0833). Five prompts had zero WER; both paths received the same word-level penalty on `Audio8`, while the optimized path had lower character error for that prompt.
+- WavLM speaker verification across the three reference prompts measured mean reference cosine 0.9388 for optimized streaming versus 0.9415 for eager, a -0.0028 delta inside the predefined 0.01 tolerance. The six-prompt quality gate passes; this remains a bounded evaluation rather than a claim of universal perceptual equivalence.
+
 ## Final comparison
 
-E009 is accepted as an exact-output optimization for greedy SGLang requests. E011 is the recommended low-TTFA profile at 114 ms with stable RTF headroom, while E010 reaches 102 ms TTFA but meets the RTF target only at p50. E008 confirms that TorchInductor is not quality-safe for this path. The SGLang generation path still requires a multi-prompt objective quality suite before production acceptance because it differs numerically from eager. E002 remains the leading exact-artifact eager optimization, although its speedup is too small to meet the RTF target alone.
+E011/E013 is the recommended low-TTFA profile at 114 ms with stable RTF headroom and a passing six-prompt objective quality gate. E010 reaches 102 ms TTFA but meets the RTF target only at p50. E008 confirms that TorchInductor is not quality-safe for this path. E002 remains the leading exact-artifact eager optimization, although its speedup is too small to meet the RTF target alone.
