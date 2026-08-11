@@ -76,6 +76,7 @@ Workload: `assets/training/Maya.wav`, matching transcript from the repository gu
 | E014 | `fec7a20` + quality harness and reference-encoder warm-up | Six-prompt eager/stream/full quality suite; 3 no-reference + 3 reference-voice prompts | pass: stream/full cosine >0.999; macro WER equal; mean speaker cosine delta -0.0028 | n/a | n/a | n/a | n/a | accept quality gate; fixes first-reference cold-start divergence |
 | E015 | `152569e` + Nsight Systems | Profile accepted 3-frame serving path to select kernel-fusion targets | observational; no output change | n/a | n/a | n/a | n/a | weight norm 7.3% GPU time; layout transforms 11.4%; target kernel elimination first |
 | E016 | `8d5b252` + codec weight baking | Materialize 80 inference-invariant weight-normalization hooks per codec after load | exact byte match for all 12 E014 WAV artifacts | **1,012.17 ms** | **1,017.39 ms** | **112.62 ms** | **0.419** p50 / 0.421 p95 | accept and enable by default: -1.7% total latency |
+| E017 | `6d2f54b` + codec-only compile | Compile dynamic-shape codec decode with TorchInductor `reduce-overhead` | no output produced; startup compiler failure | n/a | n/a | n/a | n/a | reject: backend storage-lifetime error in quantizer attention graph |
 
 ## Detailed experiments
 
@@ -192,6 +193,12 @@ Workload: `assets/training/Maya.wav`, matching transcript from the repository gu
 - Legacy and parametrized weight-normalization hooks are now materialized once after loading each codec. The runtime logged 80 baked modules for the vocoder codec, eliminating repeated normalization kernels from each streaming decode.
 - Total p50 improved from E013's 1,030.07 ms to 1,012.17 ms (-1.7%); TTFA improved from 113.90 ms to 112.62 ms; p50 RTF improved from 0.427 to 0.419.
 - The primary benchmark retained the exact E011/E013 PCM hash. More importantly, every streamed and full-decode WAV across the six-prompt E014 suite was byte-for-byte identical before and after weight baking, including all three reference-conditioned prompts. E016 is accepted and enabled by default.
+
+### E017 — codec-only TorchInductor fusion
+
+- Only `codec.decode` was wrapped with dynamic-shape `torch.compile(mode="reduce-overhead")`; autoregressive generation remained eager/CUDA Graph.
+- The first warm-up failed during startup with a TorchInductor backend storage-lifetime error while compiling the quantizer post-module attention projection. The server never accepted a request, so there was no quality exposure.
+- The experimental switch was removed rather than shipping a dormant, unvalidated path. E017 is rejected; subsequent kernel work uses narrower, directly testable targets.
 
 ## Final comparison
 
