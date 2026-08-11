@@ -10,6 +10,8 @@
 
 Exact greedy code equality is the primary gate. A valid WAV alone is not sufficient. For sampling paths, distribution and seeded behavior must also be checked before accepting an optimization.
 
+The active performance target is end-to-end RTF <= 0.5 and the lowest practical time to first playable audio (TTFA). For a non-streaming path, TTFA is effectively the full request latency.
+
 ## Environment
 
 See `profiling.md`. All short baseline measurements below use the 0.6B checkpoint, BF16, CUDA, batch size 1, greedy decoding, and `max_new_tokens=128`. Unless noted, measurements use two warm-up requests and six measured requests. The long test uses three measured requests and `max_new_tokens=256`.
@@ -54,14 +56,15 @@ Workload: `assets/training/Maya.wav`, matching transcript from the repository gu
 
 ## Experiment log
 
-| ID | Commit / patch | Change | Quality gate | p50 | p95 | Throughput | VRAM peak | Decision |
+| ID | Commit / patch | Change | Quality gate | Total p50 | p95 | TTFA p50 | RTF | Decision |
 |---|---|---|---|---:|---:|---:|---:|---|
-| E000 | `3698607` | Eager BF16 reference path | pass: valid WAV and deterministic greedy artifacts | 2,385.42 ms | 2,394.78 ms | 0.419 req/s | 1.92 GiB | baseline |
-| E001 | `3698607` + CLI wrapper | Wrap generation and decode in `torch.inference_mode()` | pass: exact codes/audio; model already does this internally | 2,387.05 ms | 2,422.02 ms | 0.419 req/s | 1.92 GiB | reject: redundant, +0.07% p50 |
-| E002 | `3698607` + model patch | Restrict semantic projection to EOS + semantic-token rows when processors/criteria are absent | pass: exact codes/audio on short no-reference, reference voice, and long text | 2,380.73 ms | 2,484.73 ms | 0.420 req/s | ~1.92 GiB | candidate: ~0.50% long-request gain; needs deployable integration |
+| E000 | `3698607` | Eager BF16 reference path | pass: valid WAV and deterministic greedy artifacts | 2,385.42 ms | 2,394.78 ms | ~2,385 ms | 0.988 | baseline |
+| E001 | `3698607` + CLI wrapper | Wrap generation and decode in `torch.inference_mode()` | pass: exact codes/audio; model already does this internally | 2,387.05 ms | 2,422.02 ms | ~2,387 ms | 0.988 | reject: redundant, +0.07% p50 |
+| E002 | `3698607` + model patch | Restrict semantic projection to EOS + semantic-token rows when processors/criteria are absent | pass: exact codes/audio on short no-reference, reference voice, and long text | 2,380.73 ms | 2,484.73 ms | ~2,381 ms | 0.986 | candidate: ~0.50% long-request gain; needs deployable integration |
 | E003 | `3698607` + compile | `torch.compile(mode=reduce-overhead)` on `_slow_step`/`_fast_step` | fail during warm-up: CUDA-graph output was overwritten | n/a | n/a | n/a | n/a | reject |
-| E003b | `3698607` + compile | `torch.compile(mode=default)` on `_slow_step`/`_fast_step` | fail: generated code changed shape and values | 1,104.16 ms | 1,105.14 ms | 0.906 req/s | ~1.92 GiB | reject despite ~53.7% p50 gain |
-| E004 | `3698607` + model patch | Allow PyTorch’s default SDPA backend instead of forced math SDPA in decode | fail: generated code changed shape and values | 2,199.70 ms | 2,228.08 ms | 0.455 req/s | ~1.91 GiB | reject despite ~7.8% p50 gain |
+| E003b | `3698607` + compile | `torch.compile(mode=default)` on `_slow_step`/`_fast_step` | fail: generated code changed shape and values | 1,104.16 ms | 1,105.14 ms | ~1,104 ms | n/a | reject despite ~53.7% p50 gain |
+| E004 | `3698607` + model patch | Allow PyTorch’s default SDPA backend instead of forced math SDPA in decode | fail: generated code changed shape and values | 2,199.70 ms | 2,228.08 ms | ~2,200 ms | n/a | reject despite ~7.8% p50 gain |
+| E005 | `86c9e5f` + pinned serving runtime | SGLang service, CUDA Graph, FlashInfer slow AR, SDPA fast head, 12-frame streaming chunks, compile off | deterministic and same length; fail exact waveform equivalence, objective quality suite pending | **860.97 ms** | **866.71 ms** | **219.28 ms** | **0.357** | performance target met; quality acceptance pending |
 
 ## Detailed experiments
 
@@ -96,6 +99,16 @@ Workload: `assets/training/Maya.wav`, matching transcript from the repository gu
 - The candidate removed the forced `SDPBackend.MATH` context around autoregressive decode.
 - It measured 2,199.70 ms p50, but the output code tensor shape and values differed from E000. It is rejected.
 
+### E005 — SGLang streaming baseline on RTX 4060 Ti
+
+- Runtime: pinned SGLang Omni `68a5723` (`0.1.0`), SGLang `0.5.8`, PyTorch `2.9.1+cu128`, Transformers `4.57.1`, BF16.
+- Configuration: CUDA Graph batch sizes 1/2/4, FlashInfer slow-AR attention, portable SDPA fast-head cache, Torch compilation disabled, 12 codec frames per streaming chunk.
+- Workload: `Welcome to Audio8 TTS.`, greedy decoding, `max_new_tokens=128`, two warm-ups and six measured requests.
+- Total p50 was 860.97 ms and p95 was 866.71 ms for 2.41488 seconds of audio: RTF 0.357.
+- TTFA p50 was 219.28 ms and p95 was 238.80 ms. The first chunk carried 0.51084 seconds of audio.
+- Every run produced 106,496 samples and the same PCM SHA-256 (`e3a548aa86c6b922cc63a38878b66d292a6294335f53c51c54c890e1e6cc2fa0`).
+- The waveform was not the eager baseline artifact: cosine similarity 0.00886 and SNR -5.10 dB despite identical length. This does not prove perceptual degradation, but it fails the exact-artifact gate. E005 remains a performance-qualified candidate until multi-prompt ASR, speaker-similarity, and listening checks establish equivalent quality.
+
 ## Final comparison
 
-No optimization is accepted yet. E002 is the leading candidate because it preserves exact greedy artifacts across three workloads and improves the long workload by ~0.50%, but it requires a tracked, deployment-safe integration and seeded-sampling validation before it can be merged.
+No optimization is accepted for production yet. E005 meets the RTF target and reduces first-audio latency from the non-streaming baseline's ~2.385 s to 219 ms, but its numerically different generation path requires an objective quality suite. E002 remains the leading exact-artifact optimization, although its speedup is too small to meet the RTF target alone.
