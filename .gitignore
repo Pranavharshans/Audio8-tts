@@ -20,6 +20,7 @@ prepared_data/
 /model/
 /configs/*
 !/configs/deepspeed_zero2.json
+!/configs/malayalam_training_samples.jsonl
 *.safetensors
 *.pth
 *.pt

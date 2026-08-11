@@ -36,6 +36,34 @@ if [[ -n "${EVAL_JSONL}" ]]; then
   data_args+=(--eval_jsonl "${EVAL_JSONL}")
   training_args+=(--do_eval true --eval_strategy steps --eval_steps "${EVAL_STEPS:-500}")
 fi
+if [[ "${PERMANENT_EPOCH_CHECKPOINTS:-false}" == "true" ]]; then
+  training_args+=(
+    --permanent_epoch_checkpoints true
+    --permanent_checkpoint_epochs "${PERMANENT_CHECKPOINT_EPOCHS:-1,2,3}"
+  )
+fi
+if [[ "${SAMPLE_EVERY_STEPS:-0}" != "0" ]]; then
+  if [[ -z "${SAMPLE_PROMPTS_JSONL:-}" \
+    || -z "${SAMPLE_REFERENCE_AUDIO:-}" \
+    || -z "${SAMPLE_REFERENCE_TEXT:-}" ]]; then
+    echo "Periodic sampling requires SAMPLE_PROMPTS_JSONL, SAMPLE_REFERENCE_AUDIO, and SAMPLE_REFERENCE_TEXT." >&2
+    exit 2
+  fi
+  training_args+=(
+    --sample_prompts_jsonl "${SAMPLE_PROMPTS_JSONL}"
+    --sample_reference_audio "${SAMPLE_REFERENCE_AUDIO}"
+    --sample_reference_text "${SAMPLE_REFERENCE_TEXT}"
+    --sample_output_dir "${SAMPLE_OUTPUT_DIR:-${OUTPUT_DIR}/samples}"
+    --sample_every_steps "${SAMPLE_EVERY_STEPS}"
+    --sample_seed "${SAMPLE_SEED:-42}"
+    --sample_max_new_tokens "${SAMPLE_MAX_NEW_TOKENS:-1024}"
+    --sample_retry_max_new_tokens "${SAMPLE_RETRY_MAX_NEW_TOKENS:-2000}"
+    --sample_temperature "${SAMPLE_TEMPERATURE:-0.8}"
+    --sample_top_p "${SAMPLE_TOP_P:-0.95}"
+    --sample_top_k "${SAMPLE_TOP_K:-50}"
+    --sample_offload_optimizer "${SAMPLE_OFFLOAD_OPTIMIZER:-true}"
+  )
+fi
 
 deepspeed_args=()
 if [[ -n "${DEEPSPEED_CONFIG}" && "${DEEPSPEED_CONFIG}" != "none" ]]; then

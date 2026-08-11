@@ -186,6 +186,41 @@ launcher was added; set `DATASET_REVISION` explicitly to select another
 revision. Checkpoints are saved every 250 optimizer steps and a repeated `train`
 or `all` invocation resumes the latest checkpoint automatically.
 
+The Vast workflow also preserves complete resumable checkpoints at the end of
+epochs 1, 2, and 3. They are stored outside normal checkpoint rotation:
+
+```text
+/workspace/audio8_ml/outputs/full-original-tokenizer/epoch_checkpoints/epoch-1/
+/workspace/audio8_ml/outputs/full-original-tokenizer/epoch_checkpoints/epoch-2/
+/workspace/audio8_ml/outputs/full-original-tokenizer/epoch_checkpoints/epoch-3/
+```
+
+### Reference-conditioned samples
+
+The reference audio is included in the repository at
+`assets/training/Maya.wav`, so a normal clone contains everything needed for
+qualitative sampling. Its matching transcript is:
+
+```text
+i went to the store to buy some fresh fruits and snacks for the evening
+```
+
+Every 1,000 optimizer steps, training pauses briefly and generates five
+reference-conditioned comparison files: the four supplied Malayalam prompts
+and a second stochastic variant of the first prompt. Results and failure logs
+are written without overwriting earlier steps:
+
+```text
+/workspace/audio8_ml/outputs/full-original-tokenizer/samples/step-00001000/
+/workspace/audio8_ml/outputs/full-original-tokenizer/samples/step-00002000/
+...
+```
+
+Sampling failures are non-fatal. On a 24 GB RTX 3090, the callback temporarily
+moves optimizer state to CPU, generates one file at a time, moves the codec back
+to CPU, and then restores optimizer state before training continues. This makes
+64 GB of system RAM preferable even though 32 GB may work.
+
 The stages can also be run independently, which is useful when changing Vast
 instances between preparation and training:
 
@@ -205,7 +240,13 @@ EVAL_SAMPLES=100 \
 bash scripts/vast_audio8_ml_full.sh all
 ```
 
-If codec preparation runs out of memory, rerun with
-`PREP_BATCH_SIZE=1`. Training defaults can be overridden through the existing
+Codec preparation defaults to `PREP_BATCH_SIZE=1` for the RTX 3090. Training
+defaults can be overridden through the existing
 environment controls, for example `GRADIENT_ACCUMULATION_STEPS`,
 `NUM_TRAIN_EPOCHS`, `LEARNING_RATE`, `SAVE_STEPS`, and `EVAL_STEPS`.
+
+For this full run, allocate 220 GB of persistent disk. A 150 GB disk may fit,
+but leaves little safety margin for the Hugging Face cache, extracted audio,
+codec arrays, virtual environment, rotating recovery checkpoints, three
+permanent epoch checkpoints, and final export. Vast disk allocations cannot be
+resized after instance creation.

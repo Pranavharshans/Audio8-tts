@@ -23,7 +23,7 @@ MAX_SAMPLES="${MAX_SAMPLES:-all}"
 EVAL_SAMPLES="${EVAL_SAMPLES:-500}"
 IMPORT_SEED="${IMPORT_SEED:-1337}"
 FORCE_IMPORT="${FORCE_IMPORT:-false}"
-PREP_BATCH_SIZE="${PREP_BATCH_SIZE:-4}"
+PREP_BATCH_SIZE="${PREP_BATCH_SIZE:-1}"
 FULL_DATASET_MIN_ROWS="${FULL_DATASET_MIN_ROWS:-70000}"
 
 RAW_DIR="${DATA_ROOT}/raw"
@@ -31,6 +31,11 @@ PREPARED_DIR="${DATA_ROOT}/prepared"
 TRAIN_JSONL="${PREPARED_DIR}/train.jsonl"
 EVAL_JSONL="${PREPARED_DIR}/eval.jsonl"
 RUN_CONFIG="${OUTPUT_DIR}/vast_run_config.env"
+SAMPLE_PROMPTS_JSONL="${SAMPLE_PROMPTS_JSONL:-${PROJECT_ROOT}/configs/malayalam_training_samples.jsonl}"
+SAMPLE_REFERENCE_AUDIO="${SAMPLE_REFERENCE_AUDIO:-${PROJECT_ROOT}/assets/training/Maya.wav}"
+SAMPLE_REFERENCE_TEXT="${SAMPLE_REFERENCE_TEXT:-i went to the store to buy some fresh fruits and snacks for the evening}"
+SAMPLE_OUTPUT_DIR="${SAMPLE_OUTPUT_DIR:-${OUTPUT_DIR}/samples}"
+SAMPLE_EVERY_STEPS="${SAMPLE_EVERY_STEPS:-1000}"
 
 usage() {
   cat <<'EOF'
@@ -48,6 +53,7 @@ Important environment overrides:
   MAX_SAMPLES=all                 Complete dataset; use an integer for a pilot
   OUTPUT_DIR=...                  Training checkpoints and final export
   CUDA_VISIBLE_DEVICES=0          The one GPU to use
+  SAMPLE_REFERENCE_AUDIO=...      Optional override for the bundled Maya.wav
 
 Training defaults can also be overridden with BATCH_SIZE,
 GRADIENT_ACCUMULATION_STEPS, NUM_TRAIN_EPOCHS, LEARNING_RATE,
@@ -76,6 +82,7 @@ esac
   || fail "MAX_SAMPLES must be 'all', 0, or a positive integer"
 [[ "${EVAL_SAMPLES}" =~ ^[1-9][0-9]*$ ]] || fail "EVAL_SAMPLES must be a positive integer"
 [[ "${PREP_BATCH_SIZE}" =~ ^[1-9][0-9]*$ ]] || fail "PREP_BATCH_SIZE must be positive"
+[[ "${SAMPLE_EVERY_STEPS}" =~ ^[0-9]+$ ]] || fail "SAMPLE_EVERY_STEPS must be non-negative"
 [[ "${IMPORT_SEED}" =~ ^[0-9]+$ ]] || fail "IMPORT_SEED must be a non-negative integer"
 [[ "${FULL_DATASET_MIN_ROWS}" =~ ^[1-9][0-9]*$ ]] \
   || fail "FULL_DATASET_MIN_ROWS must be positive"
@@ -97,6 +104,23 @@ export TOKENIZERS_PARALLELISM="${TOKENIZERS_PARALLELISM:-false}"
 export PIP_CACHE_DIR="${PIP_CACHE_DIR:-${DATA_ROOT}/pip_cache}"
 
 mkdir -p "${DATA_ROOT}" "${HF_HOME}" "${PIP_CACHE_DIR}"
+
+if [[ "${SAMPLE_EVERY_STEPS}" != "0" && ( "${STAGE}" == "train" || "${STAGE}" == "all" ) ]]; then
+  [[ -s "${SAMPLE_PROMPTS_JSONL}" ]] \
+    || fail "missing qualitative sample prompts: ${SAMPLE_PROMPTS_JSONL}"
+  [[ -s "${SAMPLE_REFERENCE_AUDIO}" ]] \
+    || fail "missing bundled Maya.wav: ${SAMPLE_REFERENCE_AUDIO}"
+  [[ -n "${SAMPLE_REFERENCE_TEXT}" ]] || fail "SAMPLE_REFERENCE_TEXT must not be empty"
+fi
+
+if [[ "${STAGE}" == "prepare" || "${STAGE}" == "all" ]]; then
+  disk_line="$(df -Pk "${DATA_ROOT}" | tail -n 1)"
+  read -r _disk_fs _disk_blocks _disk_used available_kb _disk_rest <<< "${disk_line}"
+  available_gb=$((available_kb / 1024 / 1024))
+  if (( available_gb < 180 )); then
+    echo "[audio8_tts.vast] warning: ${available_gb} GB free; 220 GB is recommended for the full run" >&2
+  fi
+fi
 
 setup_environment() {
   command -v python3 >/dev/null 2>&1 || fail "python3 is not installed"
@@ -223,6 +247,11 @@ write_run_config() {
     printf 'freeze_fast_ar=%q\n' "${FREEZE_FAST_AR:-true}"
     printf 'save_steps=%q\n' "${SAVE_STEPS:-250}"
     printf 'eval_steps=%q\n' "${EVAL_STEPS:-250}"
+    printf 'permanent_checkpoint_epochs=%q\n' "${PERMANENT_CHECKPOINT_EPOCHS:-1,2,3}"
+    printf 'sample_every_steps=%q\n' "${SAMPLE_EVERY_STEPS}"
+    printf 'sample_prompts_jsonl=%q\n' "${SAMPLE_PROMPTS_JSONL}"
+    printf 'sample_reference_audio=%q\n' "${SAMPLE_REFERENCE_AUDIO}"
+    printf 'sample_reference_text=%q\n' "${SAMPLE_REFERENCE_TEXT}"
   } > "${RUN_CONFIG}"
 }
 
@@ -252,9 +281,18 @@ train_model() {
   export SAVE_TOTAL_LIMIT="${SAVE_TOTAL_LIMIT:-3}"
   export RESUME_MODE=auto
   export REPORT_TO="${REPORT_TO:-tensorboard}"
+  export PERMANENT_EPOCH_CHECKPOINTS=true
+  export PERMANENT_CHECKPOINT_EPOCHS="${PERMANENT_CHECKPOINT_EPOCHS:-1,2,3}"
+  export SAMPLE_PROMPTS_JSONL SAMPLE_REFERENCE_AUDIO SAMPLE_REFERENCE_TEXT SAMPLE_OUTPUT_DIR
+  export SAMPLE_EVERY_STEPS
+  export SAMPLE_SEED="${SAMPLE_SEED:-42}"
+  export SAMPLE_MAX_NEW_TOKENS="${SAMPLE_MAX_NEW_TOKENS:-1024}"
+  export SAMPLE_RETRY_MAX_NEW_TOKENS="${SAMPLE_RETRY_MAX_NEW_TOKENS:-2000}"
+  export SAMPLE_OFFLOAD_OPTIMIZER=true
 
   echo "[audio8_tts.vast] train=${TRAIN_JSONL} eval=${EVAL_JSONL}"
   echo "[audio8_tts.vast] tokenizer=original output=${OUTPUT_DIR} resume=auto"
+  echo "[audio8_tts.vast] epoch_checkpoints=1,2,3 samples_every=${SAMPLE_EVERY_STEPS}"
   echo "[audio8_tts.vast] config=${RUN_CONFIG}"
   bash "${PROJECT_ROOT}/audio8_tts_sft.sh"
 }

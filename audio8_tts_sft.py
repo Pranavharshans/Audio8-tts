@@ -14,7 +14,14 @@ import torch
 import torch.nn.functional as F
 from torch.utils.checkpoint import checkpoint
 from torch.utils.data import Dataset
-from transformers import AutoModel, AutoProcessor, HfArgumentParser, Trainer, TrainingArguments
+from transformers import (
+    AutoModel,
+    AutoProcessor,
+    HfArgumentParser,
+    Trainer,
+    TrainerCallback,
+    TrainingArguments,
+)
 from transformers.trainer_utils import get_last_checkpoint
 
 from audio8_tts_data import (
@@ -27,6 +34,11 @@ from audio8_tts_data import (
     validate_sample_id,
 )
 from audio8_tts_tokenizer import extend_tokenizer_embeddings, load_additional_tokens
+from audio8_tts_training_callbacks import (
+    PeriodicAudioSamplingCallback,
+    PermanentEpochCheckpointCallback,
+    load_sample_prompts,
+)
 
 LOGGER = logging.getLogger(__name__)
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -70,6 +82,26 @@ class Audio8TTSTrainingArguments(TrainingArguments):
     )
     slow_loss_weight: float = field(default=1.0)
     fast_loss_weight: float = field(default=1.0)
+    permanent_epoch_checkpoints: bool = field(
+        default=False,
+        metadata={"help": "Preserve full checkpoints at selected completed epochs."},
+    )
+    permanent_checkpoint_epochs: str = field(
+        default="1,2,3",
+        metadata={"help": "Comma-separated epochs to preserve outside checkpoint rotation."},
+    )
+    sample_prompts_jsonl: str | None = field(default=None)
+    sample_reference_audio: str | None = field(default=None)
+    sample_reference_text: str | None = field(default=None)
+    sample_output_dir: str | None = field(default=None)
+    sample_every_steps: int = field(default=0)
+    sample_seed: int = field(default=42)
+    sample_max_new_tokens: int = field(default=1024)
+    sample_retry_max_new_tokens: int = field(default=2000)
+    sample_temperature: float = field(default=0.8)
+    sample_top_p: float = field(default=0.95)
+    sample_top_k: int = field(default=50)
+    sample_offload_optimizer: bool = field(default=True)
 
 
 @dataclass(frozen=True)
@@ -339,6 +371,16 @@ def sanitize_config_for_save(config) -> None:
             delattr(config, key)
 
 
+def parse_permanent_epochs(value: str) -> tuple[int, ...]:
+    try:
+        epochs = tuple(sorted({int(item.strip()) for item in value.split(",") if item.strip()}))
+    except ValueError as exc:
+        raise ValueError("--permanent_checkpoint_epochs must contain integers") from exc
+    if not epochs or any(epoch < 1 for epoch in epochs):
+        raise ValueError("--permanent_checkpoint_epochs must contain positive epochs")
+    return epochs
+
+
 def main() -> None:
     parser = HfArgumentParser((ModelArguments, DataArguments, Audio8TTSTrainingArguments))
     model_args, data_args, training_args = parser.parse_args_into_dataclasses()
@@ -358,6 +400,32 @@ def main() -> None:
         raise ValueError(
             "--additional_tokens_json requires --freeze_slow_ar false so new embeddings train"
         )
+    permanent_epochs = parse_permanent_epochs(training_args.permanent_checkpoint_epochs)
+    sampling_enabled = training_args.sample_every_steps > 0
+    sample_values = (
+        training_args.sample_prompts_jsonl,
+        training_args.sample_reference_audio,
+        training_args.sample_reference_text,
+    )
+    if sampling_enabled and not all(sample_values):
+        raise ValueError(
+            "periodic sampling requires --sample_prompts_jsonl, --sample_reference_audio, "
+            "and --sample_reference_text"
+        )
+    if not sampling_enabled and any(sample_values):
+        raise ValueError("sample inputs require --sample_every_steps greater than zero")
+    if training_args.sample_every_steps < 0:
+        raise ValueError("--sample_every_steps must be non-negative")
+    if training_args.sample_max_new_tokens < 1:
+        raise ValueError("--sample_max_new_tokens must be positive")
+    if training_args.sample_retry_max_new_tokens < training_args.sample_max_new_tokens:
+        raise ValueError("--sample_retry_max_new_tokens must be >= --sample_max_new_tokens")
+    if training_args.sample_temperature <= 0:
+        raise ValueError("--sample_temperature must be positive")
+    if not 0 < training_args.sample_top_p <= 1:
+        raise ValueError("--sample_top_p must be in (0, 1]")
+    if training_args.sample_top_k < 0:
+        raise ValueError("--sample_top_k must be non-negative")
 
     training_args.remove_unused_columns = False
     processor = AutoProcessor.from_pretrained(
@@ -414,6 +482,35 @@ def main() -> None:
     collator = partial(
         collate_sft_examples, pad_token_id=int(model.config.pad_token_id)
     )
+    callbacks: list[TrainerCallback] = []
+    if training_args.permanent_epoch_checkpoints:
+        callbacks.append(PermanentEpochCheckpointCallback(processor, epochs=permanent_epochs))
+    if sampling_enabled:
+        reference_audio = Path(training_args.sample_reference_audio).expanduser().resolve()
+        if not reference_audio.is_file():
+            raise FileNotFoundError(f"sample reference audio does not exist: {reference_audio}")
+        prompts = load_sample_prompts(Path(training_args.sample_prompts_jsonl))
+        sample_output_dir = Path(
+            training_args.sample_output_dir
+            or (Path(training_args.output_dir) / "samples")
+        )
+        callbacks.append(
+            PeriodicAudioSamplingCallback(
+                processor,
+                prompts=prompts,
+                reference_audio=reference_audio,
+                reference_text=training_args.sample_reference_text,
+                output_dir=sample_output_dir,
+                every_steps=training_args.sample_every_steps,
+                seed=training_args.sample_seed,
+                max_new_tokens=training_args.sample_max_new_tokens,
+                retry_max_new_tokens=training_args.sample_retry_max_new_tokens,
+                temperature=training_args.sample_temperature,
+                top_p=training_args.sample_top_p,
+                top_k=training_args.sample_top_k,
+                offload_optimizer=training_args.sample_offload_optimizer,
+            )
+        )
     trainer = Audio8TTSTrainer(
         model=model,
         args=training_args,
@@ -422,6 +519,7 @@ def main() -> None:
         data_collator=collator,
         slow_loss_weight=training_args.slow_loss_weight,
         fast_loss_weight=training_args.fast_loss_weight,
+        callbacks=callbacks,
     )
 
     resume = resolve_resume_checkpoint(training_args.output_dir, training_args.resume_mode)
