@@ -78,6 +78,7 @@ Workload: `assets/training/Maya.wav`, matching transcript from the repository gu
 | E016 | `8d5b252` + codec weight baking | Materialize 80 inference-invariant weight-normalization hooks per codec after load | exact byte match for all 12 E014 WAV artifacts | **1,012.17 ms** | **1,017.39 ms** | **112.62 ms** | **0.419** p50 / 0.421 p95 | accept and enable by default: -1.7% total latency |
 | E017 | `6d2f54b` + codec-only compile | Compile dynamic-shape codec decode with TorchInductor `reduce-overhead` | no output produced; startup compiler failure | n/a | n/a | n/a | n/a | reject: backend storage-lifetime error in quantizer attention graph |
 | E018 | `d7a9e91` + streaming final-decode elimination | Reuse incrementally emitted PCM instead of decoding the complete codec sequence again at stream completion | exact byte match for all 12 E016 WAV artifacts | **975.49 ms** | **981.43 ms** | **99.57 ms** | **0.404** p50 / 0.406 p95 | accept and enable by default: -3.6% total latency versus E016 |
+| E019 | `5adc7ba` + Nsight Systems | Re-profile the accepted E018 path after weight baking and final-decode elimination | observational; no output change | n/a | n/a | n/a | n/a | weight-normalization kernels gone; layout transforms 10.8%; fused Snake 9.8%; convolutions remain dominant |
 
 ## Detailed experiments
 
@@ -206,6 +207,12 @@ Workload: `assets/training/Maya.wav`, matching transcript from the repository gu
 - Streaming already decodes and emits the complete waveform chunk by chunk. The terminal pipeline payload now concatenates those emitted PCM chunks instead of invoking the codec once more over the full frame sequence. Non-streaming requests retain their original full single-pass decode.
 - Total p50 improved from E016's 1,012.17 ms to 975.49 ms (-3.6%); p50 RTF improved from 0.419 to 0.404, with p95 RTF at 0.406. TTFA measured 99.57 ms, but this optimization runs only at stream completion, so the apparent TTFA change is treated as benchmark variance rather than a causal gain.
 - The primary PCM hash remained `dd6aefc83ab74a1f378f74c5eae60ac2ec7a3cb468ce4f1afb0a6a97525da71e`. All 12 streamed and full-decode WAV artifacts in the six-prompt quality suite were byte-for-byte identical to E016. E018 is accepted and enabled by default.
+
+### E019 — post-optimization kernel profile
+
+- Nsight Systems captured 12 warmed streaming requests on the accepted E018 configuration. The trace is stored on the benchmark instance at `/workspace/E019_audio8_e018_serving.nsys-rep`. Instrumented latency is excluded from performance comparisons because profiler overhead is material.
+- The weight-normalization kernels identified in E015 are absent, confirming that E016 removed the intended runtime work. NCHW-to-NHWC transforms now account for 9.2% of GPU kernel time and NHWC-to-NCHW for 1.6%. The codec's existing fused Snake activation accounts for 9.8%, while several cuDNN convolution kernels occupy most of the remaining top positions.
+- CUDA API time remains dominated by `cudaStreamSynchronize` (57.0%) and `cudaMemcpyAsync` (26.6%). Device-to-host transfers are only 11.6% of GPU memory-operation time; most GPU memory-operation time is device-to-device traffic. The next experiments therefore target codec layout/convolution selection and avoid replacing already-efficient SGLang RMSNorm kernels.
 
 ## Final comparison
 
