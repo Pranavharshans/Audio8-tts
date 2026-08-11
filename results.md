@@ -65,6 +65,7 @@ Workload: `assets/training/Maya.wav`, matching transcript from the repository gu
 | E003b | `3698607` + compile | `torch.compile(mode=default)` on `_slow_step`/`_fast_step` | fail: generated code changed shape and values | 1,104.16 ms | 1,105.14 ms | ~1,104 ms | n/a | reject despite ~53.7% p50 gain |
 | E004 | `3698607` + model patch | Allow PyTorch’s default SDPA backend instead of forced math SDPA in decode | fail: generated code changed shape and values | 2,199.70 ms | 2,228.08 ms | ~2,200 ms | n/a | reject despite ~7.8% p50 gain |
 | E005 | `86c9e5f` + pinned serving runtime | SGLang service, CUDA Graph, FlashInfer slow AR, SDPA fast head, 12-frame streaming chunks, compile off | deterministic and same length; fail exact waveform equivalence, objective quality suite pending | **860.97 ms** | **866.71 ms** | **219.28 ms** | **0.357** | performance target met; quality acceptance pending |
+| E006 | `c09b0c2` + runtime config | Reduce streaming chunk from 12 to 4 codec frames, retain one-frame guard | deterministic and same length; versus SGLang full decode: cosine 0.999981, SNR 44.31 dB | 1,001.29 ms | 1,005.80 ms | **132.01 ms** | **0.415** | TTFA candidate: -39.8% TTFA, +16.3% total latency |
 
 ## Detailed experiments
 
@@ -109,6 +110,15 @@ Workload: `assets/training/Maya.wav`, matching transcript from the repository gu
 - Every run produced 106,496 samples and the same PCM SHA-256 (`e3a548aa86c6b922cc63a38878b66d292a6294335f53c51c54c890e1e6cc2fa0`).
 - The waveform was not the eager baseline artifact: cosine similarity 0.00886 and SNR -5.10 dB despite identical length. This does not prove perceptual degradation, but it fails the exact-artifact gate. E005 remains a performance-qualified candidate until multi-prompt ASR, speaker-similarity, and listening checks establish equivalent quality.
 
+### E006 — four-frame streaming chunks
+
+- Only `AUDIO8_TTS_STREAM_CHUNK_FRAMES` changed, from 12 to 4; context remained 128 frames and the one-frame boundary guard remained enabled.
+- TTFA p50 improved from 219.28 ms to 132.01 ms (39.8% lower); p95 was 141.30 ms.
+- The first response contained 0.13932 seconds of playable audio instead of 0.51084 seconds.
+- More frequent codec work increased total p50 from 860.97 ms to 1,001.29 ms and RTF from 0.357 to 0.415. The RTF target is still met.
+- All six runs produced the same 106,496-sample output and PCM hash (`608e655df117e9e8e321f441aaba7bb53521d589410d2280b6f4feb062db4cd3`).
+- Against a non-streaming full codec decode from the same SGLang request, the four-frame stream measured cosine 0.999981 and SNR 44.31 dB. The 12-frame stream measured cosine 0.999978 and SNR 43.65 dB, so reducing the chunk did not worsen this waveform-equivalence check.
+
 ## Final comparison
 
-No optimization is accepted for production yet. E005 meets the RTF target and reduces first-audio latency from the non-streaming baseline's ~2.385 s to 219 ms, but its numerically different generation path requires an objective quality suite. E002 remains the leading exact-artifact optimization, although its speedup is too small to meet the RTF target alone.
+No optimization is accepted for production yet. E005 meets the RTF target, while E006 offers the best measured TTFA at 132 ms and still meets the RTF target. Both use a numerically different SGLang generation path that requires a multi-prompt objective quality suite. E002 remains the leading exact-artifact optimization, although its speedup is too small to meet the RTF target alone.
