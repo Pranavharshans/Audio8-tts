@@ -1,0 +1,3 @@
+# Matched single-GPU Vast wheels installed from PyTorch's official cu126 index.
+torch==2.10.0
+torchaudio==2.10.0

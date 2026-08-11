@@ -132,7 +132,16 @@ setup_environment() {
   # shellcheck disable=SC1091
   source "${VENV}/bin/activate"
   python -m pip install --upgrade pip wheel
-  python -m pip install -r "${PROJECT_ROOT}/requirements-train.txt"
+  # Unqualified PyPI wheels may target a newer CUDA runtime than the host
+  # driver. Install a matched pair from PyTorch's CUDA 12.6 wheel index, then
+  # keep the rest of dependency resolution constrained to the same versions.
+  python -m pip install --upgrade \
+    --index-url https://download.pytorch.org/whl/cu126 \
+    'torch==2.10.0' \
+    'torchaudio==2.10.0'
+  python -m pip install \
+    --constraint "${PROJECT_ROOT}/constraints-vast-cu126.txt" \
+    -r "${PROJECT_ROOT}/requirements-train.txt"
   if python -m pip show deepspeed >/dev/null 2>&1; then
     echo "[audio8_tts.vast] removing DeepSpeed; it provides no benefit on one GPU"
     python -m pip uninstall -y deepspeed
@@ -151,12 +160,19 @@ check_single_gpu() {
 import torch
 
 if not torch.cuda.is_available():
-    raise SystemExit("CUDA is unavailable in the selected Python environment")
+    raise SystemExit(
+        "CUDA is unavailable in the selected Python environment "
+        f"(torch={torch.__version__}, compiled_cuda={torch.version.cuda}); "
+        "rerun the setup stage to install the pinned cu126 wheels"
+    )
 if torch.cuda.device_count() != 1:
     raise SystemExit(f"expected exactly one visible GPU, found {torch.cuda.device_count()}")
 if not torch.cuda.is_bf16_supported():
     raise SystemExit("this run uses BF16; select an Ampere-or-newer GPU with BF16 support")
-print(f"[audio8_tts.vast] torch={torch.__version__} gpu={torch.cuda.get_device_name(0)}")
+print(
+    f"[audio8_tts.vast] torch={torch.__version__} "
+    f"compiled_cuda={torch.version.cuda} gpu={torch.cuda.get_device_name(0)}"
+)
 PY
 }
 

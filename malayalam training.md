@@ -177,6 +177,21 @@ VENV=/workspace/venvs/audio8tts \
 bash scripts/vast_audio8_ml_full.sh all
 ```
 
+The setup stage pins matching PyTorch 2.10 and TorchAudio 2.10 wheels compiled
+for CUDA 12.6. Do not replace them with unqualified latest PyPI wheels: those
+can select a CUDA 13 build that an otherwise healthy Vast RTX 3090 host driver
+cannot load. Confirm the environment after setup with:
+
+```bash
+source /workspace/venvs/audio8tts/bin/activate
+python -c 'import torch; print(torch.__version__, torch.version.cuda, torch.cuda.is_available(), torch.cuda.get_device_name(0))'
+```
+
+The expected result includes `2.10.0+cu126`, `12.6`, `True`, and the RTX 3090
+device name. If an earlier setup installed a CUDA 13 wheel, pull the current
+repository and rerun the launcher; setup downgrades and aligns both packages
+before preparation begins.
+
 Keep `/workspace/audio8_ml` on persistent storage. The full dataset is the
 default (`MAX_SAMPLES=all`), the eval split contains 500 examples, the fast
 acoustic branch is frozen, and the slow semantic/text branch is trained for
