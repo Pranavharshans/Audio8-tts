@@ -66,6 +66,7 @@ Workload: `assets/training/Maya.wav`, matching transcript from the repository gu
 | E004 | `3698607` + model patch | Allow PyTorch’s default SDPA backend instead of forced math SDPA in decode | fail: generated code changed shape and values | 2,199.70 ms | 2,228.08 ms | ~2,200 ms | n/a | reject despite ~7.8% p50 gain |
 | E005 | `86c9e5f` + pinned serving runtime | SGLang service, CUDA Graph, FlashInfer slow AR, SDPA fast head, 12-frame streaming chunks, compile off | deterministic and same length; fail exact waveform equivalence, objective quality suite pending | **860.97 ms** | **866.71 ms** | **219.28 ms** | **0.357** | performance target met; quality acceptance pending |
 | E006 | `c09b0c2` + runtime config | Reduce streaming chunk from 12 to 4 codec frames, retain one-frame guard | deterministic and same length; versus SGLang full decode: cosine 0.999981, SNR 44.31 dB | 1,001.29 ms | 1,005.80 ms | **132.01 ms** | **0.415** | TTFA candidate: -39.8% TTFA, +16.3% total latency |
+| E007 | `7dc7cda` + runtime config | Reduce streaming chunk from 4 to 2 codec frames, retain one-frame guard | deterministic and same length; versus SGLang full decode: cosine 0.999982, SNR 44.40 dB | 1,201.19 ms | 1,206.58 ms | **105.34 ms** | **0.497** | aggressive TTFA profile; RTF target met with little margin |
 
 ## Detailed experiments
 
@@ -119,6 +120,14 @@ Workload: `assets/training/Maya.wav`, matching transcript from the repository gu
 - All six runs produced the same 106,496-sample output and PCM hash (`608e655df117e9e8e321f441aaba7bb53521d589410d2280b6f4feb062db4cd3`).
 - Against a non-streaming full codec decode from the same SGLang request, the four-frame stream measured cosine 0.999981 and SNR 44.31 dB. The 12-frame stream measured cosine 0.999978 and SNR 43.65 dB, so reducing the chunk did not worsen this waveform-equivalence check.
 
+### E007 — two-frame streaming chunks
+
+- Only `AUDIO8_TTS_STREAM_CHUNK_FRAMES` changed, from 4 to 2. Context and guard settings were unchanged.
+- TTFA p50 improved from 132.01 ms to 105.34 ms; p95 was 107.53 ms. The first response carried 0.04644 seconds of playable audio.
+- Total p50 increased to 1,201.19 ms because the vocoder produced 27 chunks. RTF p50 was 0.4974 and p95 was 0.4996, both below the 0.5 target but with little margin for deployment noise.
+- All six requests produced the same 106,496-sample output and PCM hash (`5ae0bafc0fe3550bd7b77962f23ae4a29502cb31f5829a9317ab6fbcdb35dec3`).
+- Against the same-path full codec decode, cosine similarity was 0.999982 and SNR was 44.40 dB. Smaller chunks did not degrade this waveform-equivalence check.
+
 ## Final comparison
 
-No optimization is accepted for production yet. E005 meets the RTF target, while E006 offers the best measured TTFA at 132 ms and still meets the RTF target. Both use a numerically different SGLang generation path that requires a multi-prompt objective quality suite. E002 remains the leading exact-artifact optimization, although its speedup is too small to meet the RTF target alone.
+No optimization is accepted for production yet. E005 is the best total-latency profile, E006 is the safer low-TTFA profile, and E007 reaches the lowest measured TTFA at 105 ms while narrowly retaining RTF <= 0.5. All three use a numerically different SGLang generation path that requires a multi-prompt objective quality suite. E002 remains the leading exact-artifact optimization, although its speedup is too small to meet the RTF target alone.
