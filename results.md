@@ -67,6 +67,7 @@ Workload: `assets/training/Maya.wav`, matching transcript from the repository gu
 | E005 | `86c9e5f` + pinned serving runtime | SGLang service, CUDA Graph, FlashInfer slow AR, SDPA fast head, 12-frame streaming chunks, compile off | deterministic and same length; fail exact waveform equivalence, objective quality suite pending | **860.97 ms** | **866.71 ms** | **219.28 ms** | **0.357** | performance target met; quality acceptance pending |
 | E006 | `c09b0c2` + runtime config | Reduce streaming chunk from 12 to 4 codec frames, retain one-frame guard | deterministic and same length; versus SGLang full decode: cosine 0.999981, SNR 44.31 dB | 1,001.29 ms | 1,005.80 ms | **132.01 ms** | **0.415** | TTFA candidate: -39.8% TTFA, +16.3% total latency |
 | E007 | `7dc7cda` + runtime config | Reduce streaming chunk from 4 to 2 codec frames, retain one-frame guard | deterministic and same length; versus SGLang full decode: cosine 0.999982, SNR 44.40 dB | 1,201.19 ms | 1,206.58 ms | **105.34 ms** | **0.497** | aggressive TTFA profile; RTF target met with little margin |
+| E008 | `621bbb1` + runtime config | Enable SGLang TorchInductor compilation with CUDA Graph and 4-frame chunks | fail: output changed from 106,496 to 116,736 samples | 991.37 ms | 997.22 ms | 120.38 ms | 0.375 reported | reject: duration/output changed for ~1% latency gain |
 
 ## Detailed experiments
 
@@ -128,6 +129,13 @@ Workload: `assets/training/Maya.wav`, matching transcript from the repository gu
 - All six requests produced the same 106,496-sample output and PCM hash (`5ae0bafc0fe3550bd7b77962f23ae4a29502cb31f5829a9317ab6fbcdb35dec3`).
 - Against the same-path full codec decode, cosine similarity was 0.999982 and SNR was 44.40 dB. Smaller chunks did not degrade this waveform-equivalence check.
 
+### E008 — SGLang TorchInductor compilation
+
+- The E006 four-frame configuration was held constant while `AUDIO8_TTS_ENABLE_TORCH_COMPILE=1` compiled and captured batch sizes 1, 2, and 4. First compilation took 208 seconds and used a persistent TorchInductor cache.
+- Total p50 was 991.37 ms versus 1,001.29 ms without compilation; TTFA was 120.38 ms versus 132.01 ms.
+- The generated result changed from 106,496 samples (2.41488 seconds) to 116,736 samples (2.64707 seconds), with a different deterministic PCM hash. This reproduces the output-length divergence seen in E003b.
+- The reported RTF of 0.375 uses the longer candidate audio and therefore cannot be treated as a quality-preserving improvement. E008 is rejected.
+
 ## Final comparison
 
-No optimization is accepted for production yet. E005 is the best total-latency profile, E006 is the safer low-TTFA profile, and E007 reaches the lowest measured TTFA at 105 ms while narrowly retaining RTF <= 0.5. All three use a numerically different SGLang generation path that requires a multi-prompt objective quality suite. E002 remains the leading exact-artifact optimization, although its speedup is too small to meet the RTF target alone.
+No optimization is accepted for production yet. E005 is the best total-latency profile, E006 is the safer low-TTFA profile, and E007 reaches the lowest measured TTFA at 105 ms while narrowly retaining RTF <= 0.5. E008 confirms that TorchInductor is not quality-safe for this path. The remaining SGLang candidates require a multi-prompt objective quality suite because their generation differs numerically from eager. E002 remains the leading exact-artifact optimization, although its speedup is too small to meet the RTF target alone.
