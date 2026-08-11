@@ -68,7 +68,7 @@ class TritonSnake1d(nn.Module):
         return output
 
 
-def install_triton_snake(module: Any, *, min_elements: int = 1 << 20) -> int:
+def install_triton_snake(module: Any, *, min_elements: int = 1 << 19) -> int:
     """Replace decoder Snake modules while retaining their trained parameters."""
 
     installed = 0

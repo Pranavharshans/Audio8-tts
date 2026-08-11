@@ -97,7 +97,7 @@ variable to `0` only for exact A/B validation.
 
 ```text
 AUDIO8_TTS_SNAKE_KERNEL=auto|torchscript|triton
-AUDIO8_TTS_TRITON_SNAKE_MIN_ELEMENTS=1048576
+AUDIO8_TTS_TRITON_SNAKE_MIN_ELEMENTS=524288
 ```
 
 The default `auto` path uses a custom Triton kernel only for large BF16,

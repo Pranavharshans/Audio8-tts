@@ -294,7 +294,7 @@ def create_vocoder_executor(
             logger.warning("Triton unavailable; retaining TorchScript Snake kernels")
         else:
             min_elements = int(
-                os.getenv("AUDIO8_TTS_TRITON_SNAKE_MIN_ELEMENTS", str(1 << 20))
+                os.getenv("AUDIO8_TTS_TRITON_SNAKE_MIN_ELEMENTS", str(1 << 19))
             )
             installed = install_triton_snake(codec.decoder, min_elements=min_elements)
             logger.info(
