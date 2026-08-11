@@ -62,14 +62,14 @@ semantics; restart without the fast path to serve sampled requests.
 The CV3 quality evaluations in this report used
 `AUDIO8_TTS_GREEDY_FASTPATH=0`.
 
-### Portable Blackwell attention path
+### Portable non-Hopper attention path
 
 `AUDIO8_TTS_ATTENTION_BACKEND` controls both the SGLang slow-AR backend and the
 fast-head cache implementation:
 
 ```text
 AUDIO8_TTS_ATTENTION_BACKEND=fa3         # default for Hopper/H20
-AUDIO8_TTS_ATTENTION_BACKEND=flashinfer  # consumer Blackwell
+AUDIO8_TTS_ATTENTION_BACKEND=flashinfer  # Ampere, Ada, consumer Blackwell
 ```
 
 The default path retains `flash_attn_with_kvcache`. When a non-`fa3` backend is
@@ -79,11 +79,10 @@ for CUDA Graph capture. This avoids the Hopper-only FA3 custom op on `sm_120`
 without changing the Hopper path.
 
 When the variable is unset, the backend is resolved by
-`models/audio8_tts/attention_backend.py`. Devices whose compute capability has
-no FA3 kernel image — currently `(12, 0)`, consumer Blackwell — default to
-`flashinfer`; every other device keeps `fa3`. The probe is cached and runs once
-per process, and an explicit `AUDIO8_TTS_ATTENTION_BACKEND` always takes
-precedence, so Hopper deployments are unaffected.
+`models/audio8_tts/attention_backend.py`. Validated Hopper capability `(9, 0)`
+uses `fa3`; Ampere, Ada, consumer Blackwell, and unknown future capabilities
+default to `flashinfer`. The probe is cached and runs once per process, and an
+explicit `AUDIO8_TTS_ATTENTION_BACKEND` always takes precedence.
 
 For consumer Blackwell deployment, `sgl_kernel` also requires the system
 `libnuma` library. The CUDA toolkit `bin` directory must be on `PATH`, and

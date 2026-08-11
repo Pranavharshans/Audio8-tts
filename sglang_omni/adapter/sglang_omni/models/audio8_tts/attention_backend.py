@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
 """Attention backend selection for the Audio8 TTS adapter.
 
-FA3 kernels are built for Hopper only. On devices that ship no FA3 kernel
-image the portable FlashInfer / SDPA path is selected automatically so that a
-default deployment starts without extra configuration. ``fa3`` remains the
-default everywhere else, and an explicit environment override always wins.
+FA3 kernels are built for Hopper only. On every other CUDA architecture the
+portable FlashInfer / SDPA path is selected automatically so that a default
+deployment starts without extra configuration. An explicit environment
+override always wins.
 """
 
 from __future__ import annotations
@@ -20,10 +20,15 @@ ATTENTION_BACKEND_ENV = "AUDIO8_TTS_ATTENTION_BACKEND"
 DEFAULT_ATTENTION_BACKEND = "fa3"
 PORTABLE_ATTENTION_BACKEND = "flashinfer"
 
-# Consumer Blackwell (RTX 50 series) reports compute capability (12, 0) and has
-# no FA3 kernel image, so flash_attn_with_kvcache fails at launch with
-# "no kernel image is available for execution on the device".
-_CAPABILITIES_WITHOUT_FA3 = frozenset({(12, 0)})
+# H20, H100, and H200 use Hopper compute capability (9, 0). FA3 does not ship
+# kernels for Ampere, Ada, or consumer Blackwell, and unknown future
+# capabilities should take the portable path until explicitly validated.
+_CAPABILITIES_WITH_FA3 = frozenset({(9, 0)})
+
+
+def _capability_supports_fa3(capability: Optional[Tuple[int, int]]) -> bool:
+    # Preserve import and CPU-only tooling behaviour when CUDA is unavailable.
+    return capability is None or capability in _CAPABILITIES_WITH_FA3
 
 
 def _device_capability() -> Optional[Tuple[int, int]]:
@@ -44,9 +49,9 @@ def fa3_kernels_available() -> bool:
     capability = _device_capability()
     if capability is None:
         return True
-    if capability in _CAPABILITIES_WITHOUT_FA3:
+    if not _capability_supports_fa3(capability):
         logger.info(
-            "Compute capability %s has no FA3 kernel image; defaulting to the "
+            "Compute capability %s is not a validated FA3 target; defaulting to the "
             "'%s' attention backend. Set %s to override.",
             capability,
             PORTABLE_ATTENTION_BACKEND,
